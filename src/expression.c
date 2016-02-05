@@ -51,6 +51,28 @@ QsExpression* qs_expression_new_with_size( unsigned size ) {
 	result->allocated = size;
 }
 
+unsigned qs_expression_n_terms( const QsExpression* e ) {
+	return e->n_terms;
+}
+
+QsIntegral* qs_expression_integral( const QsExpression* e,unsigned i ) {
+	return e->terms[ i ].integral;
+}
+
+/** Return the i-th coefficient
+ *
+ * Returns the i-th coefficient without ownership. However, ownership
+ * may be aquired regardless if qs_expression_disband( ) is used later
+ * on to destroy the expression while giving up ownership.
+ *
+ * @param This
+ * @Param The index of the coefficient
+ * @return[transfer none] The coefficient
+ */
+QsCoefficient* qs_expression_coefficient( const QsExpression* e,unsigned c ) {
+	return e->terms[ c ].coefficient;
+}
+
 void qs_expression_add( QsExpression* e,QsCoefficient* c,const QsIntegral* i ) {
 	if( e->n_terms==e->allocated )
 		e->terms = realloc( e->terms,( e->n_terms+1 )*sizeof (struct Term) );
@@ -66,6 +88,17 @@ void qs_expression_destroy( QsExpression* e ) {
 		qs_integral_destroy( e->terms[ j ].integral );
 		qs_coefficient_destroy( e->terms[ j ].coefficient );
 	}
+	qs_expression_disband( e );
+}
+
+/** Free expression structure
+ *
+ * Frees the expression structure without destroying the contained
+ * integrals and expressions.
+ *
+ * @param This
+ */
+void qs_expression_disband( QsExpression* e ) {
 	free( e->terms );
 	free( e );
 }

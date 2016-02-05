@@ -41,10 +41,10 @@ int main( const int argc,char* const argv[ ] ) {
 	QsPrint* printer = qs_print_new( );
 
 	while( ( chars = getline( &buffer,&N,infile ) )!=-1 ) {
-		QsIntegral* i = qs_integral_new_from_str( buffer )
-		QsIntegralId id = qs_integral_mgr_manage( i );
+		QsIntegral* i = qs_integral_new_from_string( buffer );
+		QsIntegralId id = qs_integral_mgr_manage( mgr,i );
 
-		const QsExpression* e = qs_integral_mgr_current( id );
+		const QsExpression* e = qs_integral_mgr_current( mgr,id,0 );
 
 		fprintf( outfile,"fill %s = %s;\n",qs_print_integral_to_str( printer,i ),qs_print_expression_to_str( printer,e ) );
 	}

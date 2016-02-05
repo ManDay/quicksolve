@@ -9,9 +9,10 @@ endif( )
 find_path( KYOTO_INCLUDE_DIR "kclangc.h" )
 find_library( KYOTO_LIB "kyotocabinet" )
 
-add_definitions( -DQS_INTEGRAL_POWERTYPE=${QS_INTEGRAL_POWERTYPE} )
+configure_file( "src/integral.h" "src/integral.h" )
 
 add_library( db "src/db.c" )
+add_library( quicklib "src/integralmgr.c" "src/integral.c" "src/coefficient.c" "src/expression.c" )
 
 target_link_libraries( db "${KYOTO_LIB}" )
 
@@ -19,6 +20,6 @@ include_directories( "${KYOTO_INCLUDE_DIR}" )
 
 add_executable( quicksolve "quicksolve.c" )
 
-target_link_libraries( quicksolve db )
+target_link_libraries( quicksolve quicklib db )
 
 

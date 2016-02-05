@@ -1,10 +1,10 @@
-#include "qs_integral.h"
+#include "integral.h"
 
 struct QsIntegral {
 	QsPrototype prototype;
-	size_t n_powers;
+	unsigned n_powers;
 	QsPower* powers;
-}
+};
 
 QsIntegral* qs_integral_new_from_string( const char* s ) {
 	const char* prototype_str = s+2;
@@ -37,8 +37,8 @@ QsIntegral* qs_integral_new_from_string( const char* s ) {
  * @param[callee-allocates] Pointer to string
  * @return Length of written string
  */
-size_t qs_integral_print( QsIntegral* i,char** b ) {
-	size_t memlen = asprintf( b,"PR%u(",i->prototype );
+unsigned qs_integral_print( QsIntegral* i,char** b ) {
+	int memlen = asprintf( b,"PR%u(",i->prototype );
 
 	int j;
 	for( j = 0; j<i->n_powers; j++ ) {
@@ -67,4 +67,14 @@ bool qs_integral_cmp( const QsIntegral* i1,const QsIntegral* i2 ) {
 			return true;
 
 	return false;
+}
+
+QsIntegral* qs_integral_cpy( const QsIntegral* i ) {
+	QsIntegral* result = malloc( sizeof (QsIntegral) );
+	result->prototype = i->prototype;
+	result->n_powers = i->n_powers;
+	result->powers = malloc( i->n_powers*sizeof (QsPower) );
+	memcpy( result->powers,i->powers,i->n_powers*sizeof( QsPower) );
+
+	return result;
 }
