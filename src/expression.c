@@ -41,7 +41,6 @@ QsExpression* qs_expression_new_from_binary( const char* data,unsigned len,unsig
 	if( id )
 		*id = *( (int*)(data + c) );
 
-	DBG_PRINT( "Constructed expression from identity #%i with %i terms from binary data of %i characters",*( (int*)( data + c ) ),result->n_terms,len );
 	return result;
 }
 

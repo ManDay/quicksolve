@@ -30,8 +30,6 @@ QsDb* qs_db_new( char* pathname,enum QsDbMode mode ) {
 	if( kcdbopen( result->db,pathname,mode==QS_DB_READ?KCOREADER:KCOWRITER ) )
 		return result;
 
-	DBG_PRINT( "Database with filename '%s' not opened due to %s",pathname,kcecodename( kcdbecode( result->db ) ) );
-
 	qs_db_destroy( result );
 	return NULL;
 }
@@ -87,10 +85,8 @@ struct QsDbEntry* qs_db_get( QsDb* db,const char* keyname,unsigned keylen ) {
 		memcpy( result->key,keyname,keylen );
 		kcdbgetbuf( db->db,result->key,keylen,result->val,result->vallen );
 		return result;
-	} else {
-		DBG_PRINT( "Could not load value for key '%.*s' (length %i) because %s",keylen,keyname,keylen,kcecodename( kcdbecode( db->db ) ) );
+	} else
 		return NULL;
-	}
 }
 
 void qs_db_entry_free( struct QsDbEntry* entry ) {

@@ -80,7 +80,6 @@ QsIntegralId qs_integral_mgr_manage( QsIntegralMgr* m,QsIntegral* i ) {
 		m->integrals[ j ].n_pivots = 0;
 		m->integrals[ j ].pivots = calloc( 1,sizeof (IdExpression*) );
 
-		DBG_PRINT( "Added integral %p to unique set %p, assigned id %i",i,m,j );
 		m->n_integrals++;
 	} else
 		qs_integral_destroy( i );
@@ -121,7 +120,6 @@ void qs_integral_add_pivot( QsIntegralMgr* m,QsIntegralId i,QsExpression* e ) {
 }
 
 QsExpression* load_expression( QsIntegralMgr* m,QsIntegralId i ) {
-	DBG_PRINT( "Attempting to load expression for integral %i in set %p",i,m );
 	char* filename;
 	QsIntegral* in = m->integrals[ i ].integral;
 	asprintf( &filename,"%s%i%s",m->prefix,qs_integral_prototype( in ),m->suffix );
