@@ -1,33 +1,32 @@
-#include "expression..h"
+#include "expression.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 struct Term {
-	const QsIntegral* integral;
+	QsIntegral* integral;
 	QsCoefficient* coefficient;
-}
+};
 
 struct QsExpression {
 	unsigned n_terms;
 	unsigned allocated;
 	struct Term* terms;
-}
+};
 
-QsExpression* qs_expression_new_from_binary( char* data,size_t len ) {
+QsExpression* qs_expression_new_from_binary( const char* data,unsigned len ) {
 	QsExpression* result = malloc( sizeof (QsExpression) );
 	result->n_terms = 0;
-	result->integrals = malloc( 0 );
-	result->coefficients = malloc( 0 );
+	result->allocated = 0;
+	result->terms = malloc( 0 );
 
 	int c;
 	while( c<len ) {
-		char* base = data+c;
+		const char* base = data+c;
 		int len_integral = *( (int*)base );
 		int len_name = strlen( base+sizeof (int) );
 
-		QsPrototypeId integral_id = qs_prototype_id_from_string( base+sizeof (int) );
-		QsIntegral* integral = qs_integral_new_from_binary( integral_id,base+sizeof (int),len_integral-len_name );
+		QsIntegral* integral = qs_integral_new_from_binary( base+sizeof (int),len_integral-len_name );
 
 		int len_coefficient = *( (int*)( base+sizeof (int)+len_integral ) );
 		QsCoefficient* coefficient = qs_coefficient_new_from_binary( base+2*sizeof (int)+len_integral,len_coefficient );
@@ -73,18 +72,18 @@ QsCoefficient* qs_expression_coefficient( const QsExpression* e,unsigned c ) {
 	return e->terms[ c ].coefficient;
 }
 
-void qs_expression_add( QsExpression* e,QsCoefficient* c,const QsIntegral* i ) {
+void qs_expression_add( QsExpression* e,QsCoefficient* c,QsIntegral* i ) {
 	if( e->n_terms==e->allocated )
 		e->terms = realloc( e->terms,( e->n_terms+1 )*sizeof (struct Term) );
 
-	struct Term* new = e->terms[ e->n_terms++ ];
+	struct Term* new = e->terms+( e->n_terms++ );
 	new->integral = i;
 	new->coefficient = c;
 }
 
 void qs_expression_destroy( QsExpression* e ) {
 	int j;
-	for( j = 0; j<n_terms; j++ ) {
+	for( j = 0; j<e->n_terms; j++ ) {
 		qs_integral_destroy( e->terms[ j ].integral );
 		qs_coefficient_destroy( e->terms[ j ].coefficient );
 	}

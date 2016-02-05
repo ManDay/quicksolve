@@ -31,6 +31,11 @@ QsIntegralMgr* qs_integral_mgr_new( const char* prefix,const char* suffix ) {
 	return qs_integral_mgr_new_with_size( prefix,suffix,1 );
 }
 
+void free_id_expression( IdExpression* ie ) {
+	free( ie->terms );
+	free( ie );
+}
+
 QsIntegralMgr* qs_integral_mgr_new_with_size( const char* prefix,const char* suffix,unsigned prealloc ) {
 	QsIntegralMgr* result = malloc( sizeof (QsIntegralMgr) );
 	result->n_integrals = 0;

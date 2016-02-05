@@ -1,1 +1,1 @@
-typedef size_t QsPrintFunction( void*,char** );
+typedef unsigned(* QsPrintFunction)( const void*,char** );

@@ -46,7 +46,7 @@ int main( const int argc,char* const argv[ ] ) {
 
 		const QsExpression* e = qs_integral_mgr_current( mgr,id,0 );
 
-		fprintf( outfile,"fill %s = %s;\n",qs_print_integral_to_str( printer,i ),qs_print_expression_to_str( printer,e ) );
+		fprintf( outfile,"fill %s = %s;\n",qs_print_generic_to_string( printer,i,(QsPrintFunction)qs_integral_print ),qs_print_generic_to_string( printer,e,(QsPrintFunction)qs_coefficient_print ) );
 	}
 
 	qs_print_destroy( printer );

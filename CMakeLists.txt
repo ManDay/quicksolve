@@ -6,13 +6,13 @@ if( NOT "${QS_INTEGRAL_POWERTYPE}" IN_LIST "${QS_INTEGRAL_POWERTYPE_VALID}" )
 	SET( QS_INTEGRAL_POWERTYPE "char" CACHE STRING "Type of Powers in Database ([char],int,long)" FORCE )
 endif( )
 
+add_definitions( "-DQS_INTEGRAL_POWERTYPE=${QS_INTEGRAL_POWERTYPE}" )
+
 find_path( KYOTO_INCLUDE_DIR "kclangc.h" )
 find_library( KYOTO_LIB "kyotocabinet" )
 
-configure_file( "src/integral.h" "src/integral.h" )
-
 add_library( db "src/db.c" )
-add_library( quicklib "src/integralmgr.c" "src/integral.c" "src/coefficient.c" "src/expression.c" )
+add_library( quicklib "src/integralmgr.c" "src/integral.c" "src/coefficient.c" "src/expression.c" "src/print.c" )
 
 target_link_libraries( db "${KYOTO_LIB}" )
 

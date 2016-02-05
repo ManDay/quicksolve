@@ -1,5 +1,8 @@
 #include "integral.h"
 
+#include <string.h>
+#include <stdlib.h>
+
 struct QsIntegral {
 	QsPrototype prototype;
 	unsigned n_powers;
@@ -8,7 +11,7 @@ struct QsIntegral {
 
 QsIntegral* qs_integral_new_from_string( const char* s ) {
 	const char* prototype_str = s+2;
-	const char* power_end = strchr( s,'(' );
+	char* power_end = strchr( s,'(' );
 
 	QsIntegral* result = malloc( sizeof (QsIntegral) );
 
@@ -19,12 +22,30 @@ QsIntegral* qs_integral_new_from_string( const char* s ) {
 	const char* power_base;
 	do {
 		power_base = power_end;
-		long value = strtol( power_base+1,&end,0 )
-		if( end!=power_base ) {
-			result->powers = realloc( ( result->n_powers+1 )*sizeof (QsPower) )
-			result->powers[ n_powers++ ]= power;
+		long value = strtol( power_base+1,&power_end,0 );
+		if( power_end!=power_base ) {
+			result->powers = realloc( result->powers,( result->n_powers+1 )*sizeof (QsPower) );
+			result->powers[ result->n_powers++ ]= value;
 		}
-	} while( end!=power_base )
+	} while( power_end!=power_base );
+
+	return result;
+}
+
+QsIntegral* qs_integral_new_from_binary( const char* data,unsigned len ) {
+	QsIntegral* result = malloc( sizeof (QsIntegral) );
+
+	char* powers_base;
+	result->prototype = strtoul( data+2,&powers_base,0 );
+	result->n_powers = 0;
+	result->powers = malloc( 0 );
+
+	QsPower* current_power = (QsPower*)powers_base;
+	QsPower* beyond_last = (QsPower*)( data+len );
+	while( current_power<beyond_last ) {
+		result->powers = realloc( result->powers,( result->n_powers+1 )*sizeof (QsPower) );
+		result->powers[ result->n_powers++ ]= *( current_power++ );
+	}
 
 	return result;
 }
@@ -37,7 +58,7 @@ QsIntegral* qs_integral_new_from_string( const char* s ) {
  * @param[callee-allocates] Pointer to string
  * @return Length of written string
  */
-unsigned qs_integral_print( QsIntegral* i,char** b ) {
+unsigned qs_integral_print( const QsIntegral* i,char** b ) {
 	int memlen = asprintf( b,"PR%u(",i->prototype );
 
 	int j;
@@ -77,4 +98,9 @@ QsIntegral* qs_integral_cpy( const QsIntegral* i ) {
 	memcpy( result->powers,i->powers,i->n_powers*sizeof( QsPower) );
 
 	return result;
+}
+
+void qs_integral_destroy( QsIntegral* i ) {
+	free( i->powers );
+	free( i );
 }
