@@ -7,22 +7,25 @@
 typedef struct QsDb QsDb;
 typedef struct QsDbCursor QsDbCursor;
 
-typedef struct {
+struct QsDbEntry {
 	char* key;
 	size_t keylen;
 	char* val;
 	size_t vallen;
-} QsDbEntry;
+};
 
 enum QsDbMode {
-	QS_DB_READ = KCOREADER,
-	QS_DB_WRITE = KCOWRITER
+	QS_DB_READ,
+	QS_DB_WRITE
 };
 
 QsDb* qs_db_new( char*,enum QsDbMode );
 QsDbCursor* qs_db_cursor_new( QsDb* );
 QsDbCursor* qs_db_cursor_reset( QsDbCursor* );
-QsDbEntry* qs_db_cursor_next( QsDbCursor* );
-void qs_db_entry_free( QsDbEntry* );
+struct QsDbEntry* qs_db_cursor_next( QsDbCursor* );
+void qs_db_entry_free( struct QsDbEntry* );
+struct QsDbEntry* qs_db_get( QsDb*,const char*,unsigned );
+void qs_db_cursor_destroy( QsDbCursor* );
+void qs_db_destroy( QsDb* );
 
 #endif

@@ -27,9 +27,9 @@ QsCoefficient* qs_coefficient_cpy( const QsCoefficient* c ) {
 unsigned qs_coefficient_print( const QsCoefficient* c,char** b ) {
 	*b = malloc( c->size+1 );
 	memcpy( *b,c->expression,c->size );
-	( *b )[ c->size-1 ]= '\0';
+	( *b )[ c->size ]= '\0';
 
-	return c->size+1;
+	return c->size;
 }
 
 void qs_coefficient_destroy( QsCoefficient* c ) {

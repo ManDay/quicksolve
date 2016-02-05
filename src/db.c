@@ -13,12 +13,27 @@ struct QsDbCursor {
 	KCCUR* cur;
 };
 
+void qs_db_destroy( QsDb* db ) {
+	kcdbdel( db->db );
+	free( db );
+}
+
+void qs_db_cursor_destroy( QsDbCursor* cur ) {
+	kccurdel( cur->cur );
+	free( cur );
+}
+
 QsDb* qs_db_new( char* pathname,enum QsDbMode mode ) {
 	QsDb* result = malloc( sizeof (QsDb) );
 	result->db = kcdbnew( );
-	kcdbopen( result->db,pathname,mode );
 
-	return result;
+	if( kcdbopen( result->db,pathname,mode==QS_DB_READ?KCOREADER:KCOWRITER ) )
+		return result;
+
+	DBG_PRINT( "Database with filename '%s' not opened due to %s",pathname,kcecodename( kcdbecode( result->db ) ) );
+
+	qs_db_destroy( result );
+	return NULL;
 }
 
 QsDbCursor* qs_db_cursor_new( QsDb* db ) {
@@ -35,32 +50,50 @@ QsDbCursor* qs_db_cursor_reset( QsDbCursor* cur ) {
 	return cur;
 }
 
-QsDbEntry* qs_db_cursor_next( QsDbCursor* cur ) {
-	char* keydata;
-	const char* data;
-	size_t keylen,datalen;
+struct QsDbEntry* create_entry( unsigned keylen,unsigned vallen ) {
+	struct QsDbEntry* result = malloc( sizeof (struct QsDbEntry)+keylen+vallen );
+	result->key =( (char*)result )+sizeof (struct QsDbEntry);
+	result->val =( (char*)result->key )+keylen;
+	result->keylen = keylen;
+	result->vallen = vallen;
 
-	keydata = kccurget( cur->cur,&keylen,&data,&datalen,true );
+	return result;
+}
+
+struct QsDbEntry* qs_db_cursor_next( QsDbCursor* cur ) {
+	char* keydata;
+	const char* val;
+	size_t keylen,vallen;
+
+	keydata = kccurget( cur->cur,&keylen,&val,&vallen,true );
 
 	if( !keydata )
 		return NULL;
 
-	QsDbEntry* result = malloc( sizeof (QsDbEntry)+keylen+datalen );
-	result->key = (char*)( result+1 );
-	result->val = (char*)( result+1 )+keylen;
+	struct QsDbEntry* result = create_entry( keylen,vallen );
 
 	memcpy( result->key,keydata,keylen );
-	memcpy( result->val,data,datalen );
-
-	result->keylen = keylen;
-	result->vallen = datalen;
+	memcpy( result->val,val,vallen );
 
 	kcfree( keydata );
 
 	return result;
 }
 
-void qs_db_entry_free( QsDbEntry* entry ) {
+struct QsDbEntry* qs_db_get( QsDb* db,const char* keyname,unsigned keylen ) {
+	int32_t vallen = kcdbcheck( db->db,keyname,keylen );
+	if( vallen!=-1 ) {
+		struct QsDbEntry* result = create_entry( keylen,vallen );
+		memcpy( result->key,keyname,keylen );
+		kcdbgetbuf( db->db,result->key,keylen,result->val,result->vallen );
+		return result;
+	} else {
+		DBG_PRINT( "Could not load value for key '%.*s' (length %i) because %s",keylen,keyname,keylen,kcecodename( kcdbecode( db->db ) ) );
+		return NULL;
+	}
+}
+
+void qs_db_entry_free( struct QsDbEntry* entry ) {
 	if( entry )
 		free( entry );
 }

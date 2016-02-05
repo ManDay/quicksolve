@@ -1,7 +1,13 @@
+#define _GNU_SOURCE
+
 #include "integralmgr.h"
 
 #include <stdlib.h>
 #include <string.h>
+
+#include <stdio.h>
+
+#include "db.h"
 
 struct IdTerm {
 	QsIntegralId integral;
@@ -32,6 +38,11 @@ QsIntegralMgr* qs_integral_mgr_new( const char* prefix,const char* suffix ) {
 }
 
 void free_id_expression( IdExpression* ie ) {
+	int j;
+
+	for( j = 0; j<ie->n_terms; j++ )
+		qs_coefficient_destroy( ie->terms[ j ].coefficient );
+
 	free( ie->terms );
 	free( ie );
 }
@@ -58,16 +69,19 @@ QsIntegralMgr* qs_integral_mgr_new_with_size( const char* prefix,const char* suf
  */
 QsIntegralId qs_integral_mgr_manage( QsIntegralMgr* m,QsIntegral* i ) {
 	// Find integral, improvable by parallelism and semantics TODO
-	int j;
+	int j = 0;
 	while( j<m->n_integrals && qs_integral_cmp( m->integrals[ j ].integral,i ) )
 		j++;
 
 	if( j==m->n_integrals ) {
 		if( m->allocated==m->n_integrals )
 			m->integrals = realloc( m->integrals,++( m->allocated )*sizeof (struct PivotGroup) );
-
 		m->integrals[ j ].integral = i;
+		m->integrals[ j ].n_pivots = 0;
 		m->integrals[ j ].pivots = calloc( 1,sizeof (IdExpression*) );
+
+		DBG_PRINT( "Added integral %p to unique set %p, assigned id %i",i,m,j );
+		m->n_integrals++;
 	} else
 		qs_integral_destroy( i );
 
@@ -106,17 +120,57 @@ void qs_integral_add_pivot( QsIntegralMgr* m,QsIntegralId i,QsExpression* e ) {
 	qs_expression_disband( e );
 }
 
+QsExpression* load_expression( QsIntegralMgr* m,QsIntegralId i ) {
+	DBG_PRINT( "Attempting to load expression for integral %i in set %p",i,m );
+	char* filename;
+	QsIntegral* in = m->integrals[ i ].integral;
+	asprintf( &filename,"%s%i%s",m->prefix,qs_integral_prototype( in ),m->suffix );
+
+	QsDb* source = qs_db_new( filename,QS_DB_READ );
+
+	free( filename );
+
+	if( !source )
+		return NULL;
+
+	unsigned n_powers = qs_integral_n_powers( in );
+
+	unsigned keylen = n_powers*sizeof (QsPower);
+	const QsPower* pwrs = qs_integral_powers( in );
+
+	struct QsDbEntry* data = qs_db_get( source,(char*)pwrs,keylen );
+
+	QsExpression* result = NULL;
+
+	if( data )
+		result = qs_expression_new_from_binary( data->val,data->vallen,NULL );
+
+	qs_db_entry_free( data );
+
+	qs_db_destroy( source );
+
+	return result;
+}
+
 /** Peeks at the current expression
  *
- * Returns an expression which contains the current pivot's expression.
+ * Returns an expression which contains the current pivot's first
+ * expression.
  *
  * @param This
  * @param The integral
- * @param Pivot number
  * @return[transfer full] The expression
  */
-const QsExpression* qs_integral_mgr_current( QsIntegralMgr* m,QsIntegralId i,unsigned k ) {
-	const IdExpression* e = m->integrals[ i ].pivots[ k ];
+QsExpression* qs_integral_mgr_current( QsIntegralMgr* m,QsIntegralId i ) {
+	if( m->integrals[ i ].n_pivots==0 ) {
+		QsExpression* loaded = load_expression( m,i );
+		if( loaded )
+			qs_integral_add_pivot( m,i,loaded );
+		else
+			return NULL;
+	}
+		
+	IdExpression* e = m->integrals[ i ].pivots[ 0 ];
 	QsExpression* result = qs_expression_new_with_size( e->n_terms );
 
 	int j;
@@ -137,5 +191,7 @@ void qs_integral_mgr_destroy( QsIntegralMgr* m ) {
 		free( m->integrals[ j ].pivots );
 	}
 	free( m->integrals );
+	free( m->prefix );
+	free( m->suffix );
 	free( m );
 }

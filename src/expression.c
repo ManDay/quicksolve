@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 struct Term {
 	QsIntegral* integral;
@@ -14,32 +15,33 @@ struct QsExpression {
 	struct Term* terms;
 };
 
-QsExpression* qs_expression_new_from_binary( const char* data,unsigned len ) {
+QsExpression* qs_expression_new_from_binary( const char* data,unsigned len,unsigned* id ) {
 	QsExpression* result = malloc( sizeof (QsExpression) );
 	result->n_terms = 0;
 	result->allocated = 0;
 	result->terms = malloc( 0 );
 
-	int c;
-	while( c<len ) {
+	int c = 0;
+	// Empty identities seem to have a 0 there instead of nothing,
+	// therefore we use an additional -1
+	while( c<len-sizeof (int)-1 ) {
 		const char* base = data+c;
 		int len_integral = *( (int*)base );
-		int len_name = strlen( base+sizeof (int) );
 
-		QsIntegral* integral = qs_integral_new_from_binary( base+sizeof (int),len_integral-len_name );
+		QsIntegral* integral = qs_integral_new_from_binary( base+sizeof (int),len_integral );
 
 		int len_coefficient = *( (int*)( base+sizeof (int)+len_integral ) );
 		QsCoefficient* coefficient = qs_coefficient_new_from_binary( base+2*sizeof (int)+len_integral,len_coefficient );
 
-		result->terms = realloc( result->terms,( result->n_terms+1 )*sizeof (struct Term) );
-
-		result->terms[ result->n_terms ].integral = integral;
-		result->terms[ result->n_terms ].coefficient = coefficient;
-
-		result->n_terms++;
+		qs_expression_add( result,coefficient,integral );
 
 		c += len_integral+len_coefficient+2*sizeof (int);
 	}
+
+	if( id )
+		*id = *( (int*)(data + c) );
+
+	DBG_PRINT( "Constructed expression from identity #%i with %i terms from binary data of %i characters",*( (int*)( data + c ) ),result->n_terms,len );
 	return result;
 }
 
@@ -48,6 +50,8 @@ QsExpression* qs_expression_new_with_size( unsigned size ) {
 	result->n_terms = 0;
 	result->terms = malloc( size*sizeof (struct Term) );
 	result->allocated = size;
+
+	return result;
 }
 
 unsigned qs_expression_n_terms( const QsExpression* e ) {
@@ -73,8 +77,10 @@ QsCoefficient* qs_expression_coefficient( const QsExpression* e,unsigned c ) {
 }
 
 void qs_expression_add( QsExpression* e,QsCoefficient* c,QsIntegral* i ) {
-	if( e->n_terms==e->allocated )
+	if( e->n_terms==e->allocated ) {
 		e->terms = realloc( e->terms,( e->n_terms+1 )*sizeof (struct Term) );
+		e->allocated++;
+	}
 
 	struct Term* new = e->terms+( e->n_terms++ );
 	new->integral = i;
@@ -100,4 +106,28 @@ void qs_expression_destroy( QsExpression* e ) {
 void qs_expression_disband( QsExpression* e ) {
 	free( e->terms );
 	free( e );
+}
+
+unsigned qs_expression_print( const QsExpression* e,char** b ) {
+	*b = calloc( 1,1 );
+	unsigned len = 0;
+
+	int j = 0;
+	for( j = 0; j<e->n_terms; j++ ) {
+		char* coeff_string;
+		char* int_string;
+
+		unsigned coeff_len = qs_coefficient_print( e->terms[ j ].coefficient,&coeff_string );
+		unsigned int_len = qs_integral_print( e->terms[ j ].integral,&int_string );
+
+		*b = realloc( *b,len+3+int_len+3+coeff_len+1 );
+		sprintf( *b + len," + %s * %s",int_string,coeff_string );
+
+		len += 3+int_len+3+coeff_len;
+
+		free( coeff_string );
+		free( int_string );
+	}
+
+	return len;
 }

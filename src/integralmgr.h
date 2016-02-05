@@ -7,5 +7,5 @@ QsIntegralMgr* qs_integral_mgr_new( const char*,const char* );
 QsIntegralMgr* qs_integral_mgr_new_with_size( const char*,const char*,unsigned );
 QsIntegralId qs_integral_mgr_manage( QsIntegralMgr*,QsIntegral* );
 void qs_integral_add_pivot( QsIntegralMgr*,QsIntegralId,QsExpression* );
-const QsExpression* qs_integral_mgr_current( QsIntegralMgr*,QsIntegralId,unsigned );
+QsExpression* qs_integral_mgr_current( QsIntegralMgr*,QsIntegralId );
 void qs_integral_mgr_destroy( QsIntegralMgr* );
