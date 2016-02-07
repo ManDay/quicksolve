@@ -48,6 +48,7 @@ int main( const int argc,char* const argv[ ] ) {
 		QsIntegral* i = qs_integral_new_from_string( buffer );
 		QsIntegralId id = qs_integral_mgr_manage( mgr,qs_integral_cpy( i ) );
 
+		qs_integral_mgr_reduce( mgr,id );
 		QsExpression* e = qs_integral_mgr_current( mgr,id );
 
 		if( e ) {
