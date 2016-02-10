@@ -3,8 +3,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include "printfunction.h"
-
 struct QsPrint {
 	size_t n_prints;
 	char** printspaces;

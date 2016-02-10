@@ -2,9 +2,11 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <signal.h>
 
 #include "src/integral.h"
 #include "src/integralmgr.h"
+#include "src/pivotgraph.h"
 #include "src/print.h"
 
 const char const usage[ ]= "The Source is the doc.";
@@ -42,19 +44,24 @@ int main( const int argc,char* const argv[ ] ) {
 	char* buffer = NULL;
 
 	QsIntegralMgr* mgr = qs_integral_mgr_new( "idPR",".dat#type=kch" );
+	QsPivotGraph* sys = qs_pivot_graph_new( mgr,(QsLoadFunction)qs_integral_mgr_load );
 	QsPrint* printer = qs_print_new( );
+
+	qs_pivot_graph_register( sys,argv+optind+1,argc-optind-1 );
+
+	// Reap fermat processes immediately
+	signal( SIGCHLD,SIG_IGN );
 
 	while( ( chars = getline( &buffer,&N,infile ) )!=-1 ) {
 		QsIntegral* i = qs_integral_new_from_string( buffer );
-		QsIntegralId id = qs_integral_mgr_manage( mgr,qs_integral_cpy( i ) );
+		QsComponent id = qs_integral_mgr_manage( mgr,qs_integral_cpy( i ) );
 
-		qs_integral_mgr_reduce( mgr,id );
-		QsExpression* e = qs_integral_mgr_current( mgr,id );
+		qs_pivot_graph_reduce( sys,id );
 
-		if( e ) {
+		/*if( e ) {
 			fprintf( outfile,"fill %s = %s;\n",qs_print_generic_to_string( printer,i,(QsPrintFunction)qs_integral_print ),qs_print_generic_to_string( printer,e,(QsPrintFunction)qs_expression_print ) );
 			qs_expression_destroy( e );
-		}
+		}*/
 
 		qs_integral_destroy( i );
 	}

@@ -9,7 +9,7 @@ endif( )
 add_definitions( "-DQS_INTEGRAL_POWERTYPE=${QS_INTEGRAL_POWERTYPE}" )
 
 if( "${CMAKE_BUILD_TYPE}" STREQUAL "Debug" )
-	add_definitions( "-D'DBG_PRINT( fmt,... )=printf( fmt \"\\n\",__VA_ARGS__ );'" )
+	add_definitions( "-D'DBG_PRINT( fmt,indent,... )=printf(\"%4i%*s\" fmt \"\\n\",indent,indent,\"\",__VA_ARGS__ )'" )
 else( )
 	add_definitions( "-D'DBG_PRINT( fmt,... )='" )
 endif( )
@@ -18,7 +18,7 @@ find_path( KYOTO_INCLUDE_DIR "kclangc.h" )
 find_library( KYOTO_LIB "kyotocabinet" )
 
 add_library( db "src/db.c" )
-add_library( quicklib "src/integralmgr.c" "src/integral.c" "src/coefficient.c" "src/expression.c" "src/print.c" )
+add_library( quicklib "src/integralmgr.c" "src/integral.c" "src/coefficient.c" "src/expression.c" "src/print.c" "src/pivotgraph.c" )
 
 target_link_libraries( db "${KYOTO_LIB}" )
 
