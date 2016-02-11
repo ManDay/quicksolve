@@ -5,24 +5,18 @@
 
 typedef unsigned QsComponent;
 
-struct QsReference {
-	QsComponent head;
-	QsCoefficient* coefficient;
-};
 
-typedef struct {
-	unsigned order;
-	unsigned n_references;
-	struct QsReference** references; ///< Array of pointers, because it changes often
-} QsReflist;
+typedef struct QsReflist QsReflist;
 
-typedef QsReflist*(* QsLoadFunction)( void*,QsComponent );
+typedef QsReflist*(* QsLoadFunction)( void*,QsComponent,unsigned* );
 typedef struct QsPivotGraph QsPivotGraph;
 
 QsPivotGraph* qs_pivot_graph_new( void*,QsLoadFunction );
 QsPivotGraph* qs_pivot_graph_new_with_size( void*,QsLoadFunction,unsigned );
-void qs_pivot_graph_add_pivot( QsPivotGraph*,QsComponent,QsReflist* );
+void qs_pivot_graph_add_pivot( QsPivotGraph*,QsComponent,QsReflist*,unsigned );
 void qs_pivot_graph_register( QsPivotGraph*,char* const[ ],unsigned );
 void qs_pivot_graph_reduce( QsPivotGraph*,QsComponent );
+QsReflist* qs_reflist_new( unsigned );
+void qs_reflist_add( QsReflist*,QsCoefficient*,QsComponent );
 
 #endif

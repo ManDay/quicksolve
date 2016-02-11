@@ -53,28 +53,22 @@ static QsExpression* get_expression_from_db( QsIntegralMgr* m,QsComponent i,unsi
 	return result;
 }
 
-QsReflist* qs_integral_mgr_load( QsIntegralMgr* m,QsComponent i ) {
-	unsigned order;
-	QsExpression* e = get_expression_from_db( m,i,&order );
+QsReflist* qs_integral_mgr_load( QsIntegralMgr* m,QsComponent i,unsigned* order ) {
+	QsExpression* e = get_expression_from_db( m,i,order );
 	
 	if( !e ) 
 		return NULL;
 
 	unsigned n = qs_expression_n_terms( e );
 
-	QsReflist* result = malloc( sizeof (QsReflist) );
-	result->order = order;
-	result->n_references = n;
-	result->references = malloc( n*sizeof (struct QsReference*) );
+	QsReflist* result = qs_reflist_new( n );
 
 	int j;
 	for( j = 0; j<n; j++ ) {
 		QsIntegral* integral = qs_expression_integral( e,j );
 		QsCoefficient* coefficient = qs_expression_coefficient( e,j );
 
-		result->references[ j ] = malloc( sizeof (struct QsReference) );
-		result->references[ j ]->head = qs_integral_mgr_manage( m,integral );
-		result->references[ j ]->coefficient = coefficient;
+		qs_reflist_add( result,coefficient,qs_integral_mgr_manage( m,integral ) );
 	}
 
 	qs_expression_disband( e );
