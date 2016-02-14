@@ -28,8 +28,8 @@ else( )
 	add_definitions( "-D'DBG_APPEND( ... )=printf( __VA_ARGS__ )'" )
 endif( )
 
-find_path( KYOTO_INCLUDE_DIR "kclangc.h" )
-find_library( KYOTO_LIB "kyotocabinet" )
+find_path( KYOTO_INCLUDE_DIR "kclangc.h" DOC "Directory of kclangc.h" )
+find_library( KYOTO_LIB "kyotocabinet" DOC "Path to libkyotocabinet" )
 
 add_library( db "src/db.c" )
 add_library( quicklib "src/integralmgr.c" "src/integral.c" "src/coefficient.c" "src/expression.c" "src/print.c" "src/pivotgraph.c" )
