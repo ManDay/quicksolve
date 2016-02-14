@@ -1,17 +1,31 @@
 cmake_minimum_required( VERSION 3.3 )
+cmake_policy( SET CMP0057 NEW )
 project( "QuickSolve" VERSION 1.0 LANGUAGES C )
 
 set( QS_INTEGRAL_POWERTYPE_VALID "char" "int" "long" )
-if( NOT "${QS_INTEGRAL_POWERTYPE}" IN_LIST "${QS_INTEGRAL_POWERTYPE_VALID}" )
-	SET( QS_INTEGRAL_POWERTYPE "char" CACHE STRING "Type of Powers in Database ([char],int,long)" FORCE )
+set( QS_DEBUG_LEVEL_VALID "0" "1" "2" "3" )
+
+if( NOT "${QS_INTEGRAL_POWERTYPE}" IN_LIST QS_INTEGRAL_POWERTYPE_VALID )
+	set( QS_INTEGRAL_POWERTYPE "char" CACHE STRING "Type of Powers in Database ([char],int,long)" FORCE )
 endif( )
 
+if( "${CMAKE_BUILD_TYPE}" STREQUAL "Debug" )
+	if( NOT "${QS_DEBUG_LEVEL}" IN_LIST QS_DEBUG_LEVEL_VALID )
+		set( QS_DEBUG_LEVEL "1" CACHE STRING "Debug verbosity ([0,...,3])" FORCE )
+	endif( )
+else( )
+	unset( QS_DEBUG_LEVEL CACHE )
+endif( )
+
+add_definitions( "-D'DBG_LEVEL=${QS_DEBUG_LEVEL}'" )
 add_definitions( "-DQS_INTEGRAL_POWERTYPE=${QS_INTEGRAL_POWERTYPE}" )
 
-if( "${CMAKE_BUILD_TYPE}" STREQUAL "Debug" )
-	add_definitions( "-D'DBG_PRINT( fmt,indent,... )=printf(\"%4i%*s\" fmt \"\\n\",indent,indent,\"\",__VA_ARGS__ )'" )
-else( )
+if( "${QS_DEBUG_LEVEL}" STREQUAL "0" )
 	add_definitions( "-D'DBG_PRINT( fmt,... )='" )
+	add_definitions( "-D'DBG_APPEND( ... )='" )
+else( )
+	add_definitions( "-D'DBG_PRINT( fmt,indent,... )=printf(\"%4i | %*s\" fmt,indent,indent,\"\",##__VA_ARGS__ )'" )
+	add_definitions( "-D'DBG_APPEND( ... )=printf( __VA_ARGS__ )'" )
 endif( )
 
 find_path( KYOTO_INCLUDE_DIR "kclangc.h" )

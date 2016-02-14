@@ -10,9 +10,14 @@
 
 #include "db.h"
 
+struct Target {
+	QsIntegral* integral;
+	bool master;
+};
+
 struct QsIntegralMgr {
 	unsigned n_integrals;
-	QsIntegral** integrals;
+	struct Target* integrals;
 	unsigned allocated;
 	char* prefix;
 	char* suffix;
@@ -20,7 +25,7 @@ struct QsIntegralMgr {
 
 static QsExpression* get_expression_from_db( QsIntegralMgr* m,QsComponent i,unsigned* order ) {
 	char* filename;
-	QsIntegral* in = m->integrals[ i ];
+	QsIntegral* in = m->integrals[ i ].integral;
 	asprintf( &filename,"%s%i%s",m->prefix,qs_integral_prototype( in ),m->suffix );
 
 	QsDb* source = qs_db_new( filename,QS_DB_READ );
@@ -44,7 +49,7 @@ static QsExpression* get_expression_from_db( QsIntegralMgr* m,QsComponent i,unsi
 		// The "equivalence system" means that if the identity for integral I
 		// is of the form 1*A, it actually means 1*A + (-1)*I
 		if( qs_expression_n_terms( result )==1 && qs_coefficient_is_one( qs_expression_coefficient( result,0 ) ) )
-			qs_expression_add( result,qs_coefficient_new_from_binary( "-1",2 ),m->integrals[ i ] );
+			qs_expression_add( result,qs_coefficient_new_from_binary( "-1",2 ),m->integrals[ i ].integral );
 	}
 
 	qs_db_entry_free( data );
@@ -54,10 +59,15 @@ static QsExpression* get_expression_from_db( QsIntegralMgr* m,QsComponent i,unsi
 }
 
 QsReflist* qs_integral_mgr_load( QsIntegralMgr* m,QsComponent i,unsigned* order ) {
+	if( m->integrals[ i ].master )
+		return NULL;
+
 	QsExpression* e = get_expression_from_db( m,i,order );
 	
-	if( !e ) 
+	if( !e ) {
+		m->integrals[ i ].master = true;
 		return NULL;
+	}
 
 	unsigned n = qs_expression_n_terms( e );
 
@@ -84,7 +94,7 @@ QsIntegralMgr* qs_integral_mgr_new_with_size( const char* prefix,const char* suf
 	QsIntegralMgr* result = malloc( sizeof (QsIntegralMgr) );
 	result->n_integrals = 0;
 	result->allocated = prealloc;
-	result->integrals = malloc( prealloc*sizeof (QsIntegral*) );
+	result->integrals = malloc( prealloc*sizeof (struct Target) );
 	result->prefix = strdup( prefix );
 	result->suffix = strdup( suffix );
 
@@ -102,16 +112,17 @@ QsIntegralMgr* qs_integral_mgr_new_with_size( const char* prefix,const char* suf
  */
 QsComponent qs_integral_mgr_manage( QsIntegralMgr* g,QsIntegral* i ) {
 	int j = 0;
-	while( j<g->n_integrals && qs_integral_cmp( g->integrals[ j ],i ) )
+	while( j<g->n_integrals && qs_integral_cmp( g->integrals[ j ].integral,i ) )
 		j++;
 
 	if( j==g->n_integrals ) {
 		if( g->allocated==g->n_integrals )
-			g->integrals = realloc( g->integrals,++( g->allocated )*sizeof (QsIntegral*) );
-		g->integrals[ j ] = i;
+			g->integrals = realloc( g->integrals,++( g->allocated )*sizeof (struct Target) );
+		g->integrals[ j ].integral = i;
+		g->integrals[ j ].master = false;
 		g->n_integrals++;
 	} else {
-		assert( g->integrals[ j ]!=i );
+		assert( g->integrals[ j ].integral!=i );
 		qs_integral_destroy( i );
 	}
 
@@ -121,7 +132,7 @@ QsComponent qs_integral_mgr_manage( QsIntegralMgr* g,QsIntegral* i ) {
 void qs_integral_mgr_destroy( QsIntegralMgr* m ) {
 	int j;
 	for( j = 0; j<m->n_integrals; j++ )
-		qs_integral_destroy( m->integrals[ j ] );
+		qs_integral_destroy( m->integrals[ j ].integral );
 	free( m->integrals );
 	free( m->prefix );
 	free( m->suffix );

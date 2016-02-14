@@ -19,8 +19,8 @@ struct QsReflist {
 };
 
 typedef struct {
-	unsigned order;
 	QsReflist refs;
+	unsigned order;
 	bool infinite; ///< False if the pivot is contained in the terms
 	int index; ///< Index of the pivots within the terms
 } Pivot;
@@ -40,6 +40,193 @@ struct QsPivotGraph {
 	QsEvaluator* ev;
 };
 
+static void qs_reflist_del( QsReflist*,unsigned );
+static bool forward_reduce_full( QsPivotGraph*,QsComponent,unsigned );
+static void schedule( QsPivotGraph* g,struct QsReference* );
+static void wait( QsPivotGraph* );
+static bool forward_reduce_one( QsPivotGraph* g,QsComponent i,unsigned );
+static void clean_pivot( Pivot* );
+static void assert_coverage( QsPivotGraph*,QsComponent );
+static bool assert_expression( QsPivotGraph*,QsComponent );
+static bool find_index( QsReflist*,QsComponent,unsigned* );
+
+static void schedule( QsPivotGraph* g,struct QsReference* r ) {
+	qs_evaluator_evaluate( g->ev,r->coefficient );
+}
+
+static void wait( QsPivotGraph* g ) {
+	return;
+}
+
+/** Eliminate one component in a pivot and recurse
+ *
+ * Removes the first component (which is found) which is less than the
+ * pivot's order and recurses to remove the next one, until no such
+ * components are left.
+ *
+ * @param This
+ * @param The pivot
+ * @return True if all components which are less than the pivot could be
+ * eliminated, false if one couldn't be (because no according identity
+ * could be generated)
+ */
+static bool forward_reduce_one( QsPivotGraph* g,QsComponent i,unsigned DEL_DEPTH ) {
+	Pivot* p = g->components[ i ].pivots;
+	QsReflist* l = (QsReflist*)p;
+
+	// Find a reference to a component with a smaller Reflist
+	// Modified for comparison with IdSolver: Find reference with the
+	// lowest order (but do not replace everywhere)
+	int j;
+	QsComponent target_id;
+	unsigned lowest = 0;
+	QsCoefficient* factor = NULL;
+	p->infinite = true;
+	for( j = 0; j<l->n_references; j++ ) {
+		QsComponent i2 = l->references[ j ].head;
+		if( i2!=i && assert_expression( g,i2 ) ) {
+			unsigned head_order = g->components[ i2 ].pivots->order;
+			if( head_order<g->components[ i ].pivots->order ) {
+				if( head_order<lowest || !factor ) {
+					factor = l->references[ j ].coefficient;
+					lowest = head_order;
+					target_id = i2;
+				}
+			}
+		}
+		if( i2==i ) {
+			p->index = j;
+			p->infinite = false;
+		}
+	}
+
+	if( !factor )
+		return true;
+
+#if DBG_LEVEL>2
+	DBG_PRINT( " Coefficients now {\n",DEL_DEPTH );
+	int k;
+	for( k = 0; k<l->n_references; k++ ) {
+		char* str;
+		qs_coefficient_print( l->references[ k ].coefficient,&str );
+		DBG_PRINT( "  %i: %s\n",DEL_DEPTH,l->references[ k ].head,str );
+		free( str );
+	}
+	DBG_PRINT( " }\n",DEL_DEPTH );
+#endif
+
+	// These are the arrows that are being rebased
+	QsReflist* target = (QsReflist*)( g->components[ target_id ].pivots ); 
+
+	if( forward_reduce_full( g,target_id,DEL_DEPTH+1 ) ) {
+		unsigned index = g->components[ target_id ].pivots->index;
+		QsCoefficient* prefactor = qs_coefficient_divide( qs_coefficient_negate( qs_coefficient_cpy( factor ) ),qs_coefficient_cpy( target->references[ index ].coefficient ) );
+
+#if DBG_LEVEL>2
+		char* str;
+		qs_coefficient_print( prefactor,&str );
+		DBG_PRINT( " Passing pivot %i with order %i, prefactor %s and coefficients {\n",DEL_DEPTH,target_id,g->components[ target_id ].pivots->order,str );
+		free( str );
+#endif
+
+		// Expand target and summarize terms
+		int j;
+		for( j = 0; j<target->n_references; j++ ) {
+			QsComponent addition_component = target->references[ j ].head;
+
+#if DBG_LEVEL>2
+			char* str;
+			qs_coefficient_print( target->references[ j ].coefficient,&str );
+			DBG_PRINT( "  %i: %s\n",DEL_DEPTH,target->references[ j ].head,str );
+			free( str );
+#endif
+
+			if( target_id!=addition_component ) {
+				QsCoefficient* addition_coefficient = target->references[ j ].coefficient;
+				QsCoefficient* addition = qs_coefficient_multiply( qs_coefficient_cpy( prefactor ),qs_coefficient_cpy( addition_coefficient ) );
+
+				unsigned corresponding;
+				if( find_index( l,addition_component,&corresponding ) )
+					l->references[ corresponding ].coefficient = qs_coefficient_add( l->references[ corresponding ].coefficient,addition );
+				else
+					qs_reflist_add( l,addition,addition_component );
+			}
+
+		}
+
+#if DBG_LEVEL>2
+		DBG_PRINT( " }\n",DEL_DEPTH );
+#endif
+
+		qs_coefficient_destroy( prefactor );
+
+		// Remove target from the terms
+		unsigned target_pos;
+		assert( find_index( l,target_id,&target_pos ) );
+
+		qs_reflist_del( l,target_pos );
+
+		// Perform evaluation
+		j = 0;
+		while( j<l->n_references ) {
+			schedule( g,l->references + j );
+
+			if( qs_coefficient_is_zero( l->references[ j ].coefficient ) )
+				qs_reflist_del( l,j );
+			else
+				j++;
+		}
+
+		wait( g );
+	} else {
+		DBG_PRINT( " Could not pass on pivot with order %i!\n",DEL_DEPTH,g->components[ target_id ].pivots->order );
+		return false;
+	}
+	
+	return forward_reduce_one( g,i,DEL_DEPTH );
+}
+
+/** Eliminate all smaller pivots in a Reflist
+ *
+ * Eliminates all components "left of" the given component.
+ *
+ * @param This
+ * @param The component whose Reflist is to be modified
+ * @return True if the calculation succeeded to the end that the
+ * according component now has a Reflist which is "fit" for elimiation
+ * of the component itsself in other Reflists.
+ */
+static bool forward_reduce_full( QsPivotGraph* g,QsComponent i,unsigned DEL_DEPTH ) {
+	// No pivots, can't reduce. Not needed within the recursion, where
+	// forward_reduce_one already checks that.
+	if( !assert_expression( g,i ) )
+		return false;
+
+	Pivot* p = g->components[ i ].pivots;
+	if( p->index==-1 ) {
+		DBG_PRINT( "Solving for pivot with order %i {\n",DEL_DEPTH,p->order );
+
+		if( !forward_reduce_one( g,i,DEL_DEPTH ) ) {
+			DBG_PRINT( "} Failed\n",DEL_DEPTH );
+			return false;
+		} else {
+#if DBG_LEVEL>1
+			DBG_PRINT( "} Done with %i non-zero coefficients {\n",DEL_DEPTH,p->refs.n_references );
+			int j;
+			for( j = 0; j<p->refs.n_references; j++ ) {
+				char* str;
+				qs_coefficient_print( p->refs.references[ j ].coefficient,&str );
+				DBG_PRINT( " %i: %s\n",DEL_DEPTH,p->refs.references[ j ].head,str );
+				free( str );
+			}
+#endif
+			DBG_PRINT( "}\n",DEL_DEPTH );
+		}
+	}
+
+	return !( p->infinite );
+}
+
 QsReflist* qs_reflist_new( unsigned prealloc ) {
 	QsReflist* result = malloc( sizeof (QsReflist) );
 	result->n_references = 0;
@@ -51,13 +238,15 @@ QsReflist* qs_reflist_new( unsigned prealloc ) {
 
 void qs_reflist_add( QsReflist* l,QsCoefficient* c,QsComponent i ) {
 	if( l->allocated==l->n_references )
-		l->references = realloc( l->references,( l->allocated )++*sizeof (struct QsReference) );
+		l->references = realloc( l->references,++( l->allocated )*sizeof (struct QsReference) );
 
-	l->references[ l->n_references-1 ].head = i;
-	l->references[ l->n_references-1 ].coefficient = c;
+	l->references[ l->n_references ].head = i;
+	l->references[ l->n_references ].coefficient = c;
+
+	l->n_references++;
 }
 
-void qs_reflist_del( QsReflist* l,unsigned index ) {
+static void qs_reflist_del( QsReflist* l,unsigned index ) {
 	qs_coefficient_destroy( l->references[ index ].coefficient );
 	l->n_references--;
 
@@ -72,15 +261,27 @@ static void clean_pivot( Pivot* p ) {
 	free( p->refs.references );
 }
 
-static void schedule( QsPivotGraph* g,struct QsReference* r ) {
-	qs_evaluator_evaluate( g->ev,r->coefficient );
-}
+static void assert_coverage( QsPivotGraph* g,QsComponent i ) {
+	if( g->n_components>i )
+		return;
 
-static void wait( QsPivotGraph* g ) {
-	return;
+	if( g->allocated<=i ) {
+		g->components = realloc( g->components,( i+1 )*sizeof (struct PivotGroup) );
+		g->allocated = i+1;
+	}
+
+	int j;
+	for( j = g->n_components; j<=i; j++ ) {
+		g->components[ j ].n_pivots = 0;
+		g->components[ j ].pivots = NULL;
+	}
+
+	g->n_components = i+1;
 }
 
 static bool assert_expression( QsPivotGraph* g,QsComponent i ) {
+	assert_coverage( g,i );
+		
 	if( g->components[ i ].n_pivots )
 		return true;
 
@@ -101,93 +302,6 @@ static bool find_index( QsReflist* l,QsComponent i,unsigned* result ) {
 			return true;
 	
 	return false;
-}
-
-static bool forward_reduce_full( QsPivotGraph*,QsComponent,unsigned );
-static bool forward_reduce_one( QsPivotGraph* g,QsComponent i,unsigned DEL_DEPTH ) {
-	QsReflist* l = (QsReflist*)( g->components[ i ].pivots );
-
-	// Find a reference to a component with a smaller Reflist
-	int j;
-	QsComponent target_id;
-	bool found = false;
-	for( j = 0; j<l->n_references; j++ ) {
-		QsComponent i2 = l->references[ j ].head;
-		if( assert_expression( g,i2 )&& g->components[ i2 ].pivots->order<g->components[ i ].pivots->order ) {
-			found = true;
-			target_id = i2;
-			break;
-		}
-	}
-
-	if( !found )
-		return true;
-
-	// This is the arrow that we are going to relay
-	QsReflist* target = (QsReflist*)( g->components[ target_id ].pivots ); 
-
-	if( forward_reduce_full( g,target_id,DEL_DEPTH+1 ) ) {
-		unsigned index = g->components[ i ].pivots->index;
-		const QsCoefficient* prefactor = target->references[ index ].coefficient;
-
-		// Expand target and summarize terms
-		int j;
-		for( j = 0; j<target->n_references; j++ ) {
-			QsComponent addition_component = target->references[ j ].head;
-
-			if( target_id!=addition_component ) {
-				QsCoefficient* addition_coefficient = target->references[ j ].coefficient;
-				QsCoefficient* addition = qs_coefficient_negate( qs_coefficient_divide( qs_coefficient_cpy( addition_coefficient ),qs_coefficient_cpy( prefactor ) ) );
-
-				unsigned corresponding;
-				if( find_index( l,addition_component,&corresponding ) )
-					qs_coefficient_add( l->references[ corresponding ].coefficient,addition );
-				else
-					qs_reflist_add( l,addition,addition_component );
-			}
-		}
-
-		// Remove target from the terms
-		unsigned target_pos;
-		assert( find_index( l,target_id,&target_pos ) );
-
-		qs_reflist_del( l,target_pos );
-	} else
-		return false;
-	
-	return forward_reduce_one( g,i,DEL_DEPTH );
-}
-
-static bool forward_reduce_full( QsPivotGraph* g,QsComponent i,unsigned DEL_DEPTH ) {
-	// No pivots, can't reduce
-	if( !assert_expression( g,i ) )
-		return true;
-
-	Pivot* p = g->components[ i ].pivots;
-	QsReflist* l = (QsReflist*)( g->components[ i ].pivots );
-
-	if( p->index!=-1 )
-		return true;
-
-	DBG_PRINT( "Forward reducing integral with associated identity #%i",DEL_DEPTH,p->order );
-
-	if( !forward_reduce_one( g,i,DEL_DEPTH ) )
-		return false;
-
-	// Perform evaluation
-	int j;
-	for( j = 0; j<l->n_references; j++ ) {
-		schedule( g,l->references + j );
-
-		if( l->references[ j ].head==i )
-			p->index = j;
-	}
-
-	wait( g );
-	
-	p->infinite = qs_coefficient_is_zero( l->references[ p->index ].coefficient );
-
-	return !( p->infinite );
 }
 
 QsPivotGraph* qs_pivot_graph_new( void* load_data,QsLoadFunction loader ) {
