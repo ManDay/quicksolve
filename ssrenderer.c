@@ -53,11 +53,13 @@ int main( const int argc,char* const argv[ ] ) {
 		struct Column* columns;
 	} order_map;
 
+	unsigned masters_allocated = 0;
+	unsigned n_masters = 0;
 	order_map.allocated = 1;
 	order_map.n_columns = 0;
 
 	int opt;
-	while( ( opt = getopt( argc,argv,"c:r:w:h:o:s:a:i" ) )!=-1 ) {
+	while( ( opt = getopt( argc,argv,"c:r:w:h:o:s:a:m:i" ) )!=-1 ) {
 		switch( opt ) {
 		case 'o':
 			outfilename = optarg;
@@ -86,6 +88,10 @@ int main( const int argc,char* const argv[ ] ) {
 			if( ( order_map.allocated = strtol( optarg,NULL,0 ) )<1 )
 				help = true;
 			break;
+		case 'm':
+			if( ( masters_allocated = strtol( optarg,NULL,0 ) )<1 )
+				help = true;
+			break;
 		case 'i':
 			use_ids = true;
 			break;
@@ -99,17 +105,18 @@ int main( const int argc,char* const argv[ ] ) {
 
 	struct Sector* entries;
 	struct MasterSector** masters;
-	int n_masters;
 	unsigned stat_min = 0,stat_max = 0;
 
 	order_map.columns = malloc( order_map.allocated*sizeof (struct Column) );
-	entries = malloc( width*height*sizeof (struct Sector) );
-	masters = malloc( 0 );
-	n_masters = 0;
+	entries = calloc( width*height,sizeof (struct Sector) );
+	masters = malloc( masters_allocated*sizeof (struct MasterSector*) );
+
+	int j;
+	for( j = 0; j<masters_allocated; j++ )
+		masters[ j ]= calloc( height,sizeof (struct MasterSector) );
 
 	QsIntegralMgr* m = qs_integral_mgr_new( "idPR",".dat#type=kch" );
 
-	int j;
 	for( j = optind; j<argc; j++ ) {
 
 		char* fullname;
@@ -160,25 +167,34 @@ int main( const int argc,char* const argv[ ] ) {
 									order_map.n_columns = id+1;
 								}
 
+								int column_order;
+
 								if( !order_map.columns[ id ].loaded ) {
-									unsigned order2;
-									QsExpression* e2 = qs_integral_mgr_load_expression( m,id,&order2 );
+									unsigned order_test;
+									QsExpression* e2 = qs_integral_mgr_load_expression( m,id,&order_test );
 
 									if( e2 ) {
-										order_map.columns[ id ].order = order2;
+										column_order = order_test;
+										order_map.columns[ id ].order = column_order;
+
 										qs_expression_destroy( e2 );
 									} else {
-										order_map.columns[ id ].order = -( ++n_masters );
-										masters = realloc( masters,n_masters*sizeof (struct MasterSector*) );
-										masters[ n_masters-1 ] = calloc( height,sizeof (struct MasterSector) );
-									}
-									order_map.columns[ id ].loaded = true;
-								}
+										column_order = -( ++n_masters );
+										order_map.columns[ id ].order = column_order;
 
-								int column_order = order_map.columns[ id ].order;
+										if( masters_allocated<( n_masters+resolution-1 )/resolution ) {
+											masters = realloc( masters,++masters_allocated*sizeof (struct MasterSector*) );
+											masters[ masters_allocated-1 ] = calloc( height,sizeof (struct MasterSector) );
+										}
+									}
+
+									order_map.columns[ id ].loaded = true;
+								} else
+									column_order = order_map.columns[ id ].order;
 
 								if( column_order<0 ) {
-									masters[ -column_order-1 ][ ssrow ].n_coefficients++;
+									unsigned sscolumn =( -column_order-1 )/resolution;
+									masters[ sscolumn ][ ssrow ].n_coefficients++;
 								} else if( column_order>=base_column ) {
 									unsigned sscolumn =( column_order-base_column )/resolution;
 									if( sscolumn<width )
@@ -234,12 +250,12 @@ int main( const int argc,char* const argv[ ] ) {
 	 *
 	 * Thus
 	 *
-	 * image with = 1+width+1+1+1+n_masters+1 = width+n_masters+6
+	 * image with = 1+width+1+1+1+n_masters+1 = width+n_masters+5
 	 * image height = 1+height+1 = height+2
 	 */
-
 	
-	unsigned img_width = width+n_masters+5;
+	unsigned n_mastercols = ( n_masters+resolution-1 )/resolution;
+	unsigned img_width = width+n_mastercols+5;
 	unsigned img_height = height+2;
 	cairo_surface_t* cs = cairo_image_surface_create( CAIRO_FORMAT_RGB24,img_width,img_height );
 	cairo_t* cr = cairo_create( cs );
@@ -255,7 +271,7 @@ int main( const int argc,char* const argv[ ] ) {
 	cairo_rectangle( cr,0.5,0.5,width+1,height+1 );
 	cairo_stroke( cr );
 
-	cairo_rectangle( cr,width+3.5,0.5,n_masters+1,height+1 );
+	cairo_rectangle( cr,width+3.5,0.5,n_mastercols+1,height+1 );
 	cairo_stroke( cr );
 
 	unsigned total = resolution*resolution;
@@ -283,21 +299,21 @@ int main( const int argc,char* const argv[ ] ) {
 		}
 	}
 
-	unsigned master;
-	for( master = 0; master<n_masters; master++ ) {
+	unsigned sscolumn;
+	for( sscolumn = 0; sscolumn<n_mastercols; sscolumn++ ) {
 		unsigned ssrow;
 		for( ssrow = 0; ssrow<height; ssrow++ ) {
-			struct MasterSector current = masters[ master ][ ssrow ];
+			struct MasterSector current = masters[ sscolumn ][ ssrow ];
 
 			double mass;
 
 			if( current.n_coefficients==0 )
 				mass = 1;
 			else
-				mass = 0.5-0.5*current.n_coefficients/resolution;
+				mass = 0.5-0.5*current.n_coefficients/total;
 
 			cairo_set_source_rgb( cr,mass,mass,mass );
-			cairo_rectangle( cr,4+width+master,1+ssrow,1,1 );
+			cairo_rectangle( cr,4+width+sscolumn,1+ssrow,1,1 );
 			cairo_fill( cr );
 		}
 	}
@@ -309,7 +325,7 @@ int main( const int argc,char* const argv[ ] ) {
 	cairo_surface_destroy( cs );
 
 	int k;
-	for( k = 0; k<n_masters; k++ )
+	for( k = 0; k<masters_allocated; k++ )
 		free( masters[ k ] );
 
 	free( masters );
