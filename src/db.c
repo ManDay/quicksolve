@@ -38,6 +38,7 @@ QsDbCursor* qs_db_cursor_new( QsDb* db ) {
 	QsDbCursor* result = malloc( sizeof (QsDbCursor) );
 	result->db = db;
 	result->cur = kcdbcursor( db->db );
+	qs_db_cursor_reset( result );
 
 	return result;
 }
@@ -89,7 +90,8 @@ struct QsDbEntry* qs_db_get( QsDb* db,const char* keyname,unsigned keylen ) {
 		return NULL;
 }
 
-void qs_db_entry_free( struct QsDbEntry* entry ) {
+void qs_db_entry_destroy( struct QsDbEntry* entry ) {
+	// Note that create_entry will create all in one chunk!
 	if( entry )
 		free( entry );
 }

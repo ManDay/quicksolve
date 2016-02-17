@@ -1,0 +1,2 @@
+typedef unsigned QsComponent;
+

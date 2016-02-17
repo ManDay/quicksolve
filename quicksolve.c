@@ -11,6 +11,28 @@
 
 const char const usage[ ]= "The Source is the doc.";
 
+QsReflist* loader( QsIntegralMgr* m,QsComponent i,unsigned* order ) {
+	QsExpression* e = qs_integral_mgr_load_expression( m,i,order );
+	
+	if( !e )
+		return NULL;
+
+	unsigned n = qs_expression_n_terms( e );
+
+	QsReflist* result = qs_reflist_new( n );
+	int j;
+	for( j = 0; j<n; j++ ) {
+		QsIntegral* integral = qs_expression_integral( e,j );
+		QsCoefficient* coefficient = qs_expression_coefficient( e,j );
+
+		qs_reflist_add( result,coefficient,qs_integral_mgr_manage( m,integral ) );
+	}
+
+	qs_expression_disband( e );
+
+	return result;
+}
+
 int main( const int argc,char* const argv[ ] ) {
 	// Parse arguments
 	char* outfilename = NULL;
@@ -44,7 +66,7 @@ int main( const int argc,char* const argv[ ] ) {
 	char* buffer = NULL;
 
 	QsIntegralMgr* mgr = qs_integral_mgr_new( "idPR",".dat#type=kch" );
-	QsPivotGraph* sys = qs_pivot_graph_new( mgr,(QsLoadFunction)qs_integral_mgr_load );
+	QsPivotGraph* sys = qs_pivot_graph_new( mgr,(QsLoadFunction)loader );
 	QsPrint* printer = qs_print_new( );
 
 	qs_pivot_graph_register( sys,argv+optind+1,argc-optind-1 );

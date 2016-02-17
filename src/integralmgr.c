@@ -23,7 +23,10 @@ struct QsIntegralMgr {
 	char* suffix;
 };
 
-static QsExpression* get_expression_from_db( QsIntegralMgr* m,QsComponent i,unsigned* order ) {
+QsExpression* qs_integral_mgr_load_expression( QsIntegralMgr* m,QsComponent i,unsigned* order ) {
+	if( m->integrals[ i ].master )
+		return NULL;
+
 	char* filename;
 	QsIntegral* in = m->integrals[ i ].integral;
 	asprintf( &filename,"%s%i%s",m->prefix,qs_integral_prototype( in ),m->suffix );
@@ -32,56 +35,30 @@ static QsExpression* get_expression_from_db( QsIntegralMgr* m,QsComponent i,unsi
 
 	free( filename );
 
-	if( !source )
-		return NULL;
-
-	unsigned n_powers = qs_integral_n_powers( in );
-
-	unsigned keylen = n_powers*sizeof (QsPower);
-	const QsPower* pwrs = qs_integral_powers( in );
-
-	struct QsDbEntry* data = qs_db_get( source,(char*)pwrs,keylen );
-
 	QsExpression* result = NULL;
 
-	if( data ) {
-		result = qs_expression_new_from_binary( data->val,data->vallen,order );
-		// The "equivalence system" means that if the identity for integral I
-		// is of the form 1*A, it actually means 1*A + (-1)*I
-		if( qs_expression_n_terms( result )==1 && qs_coefficient_is_one( qs_expression_coefficient( result,0 ) ) )
-			qs_expression_add( result,qs_coefficient_new_from_binary( "-1",2 ),m->integrals[ i ].integral );
+	if( source ) {
+		unsigned n_powers = qs_integral_n_powers( in );
+
+		unsigned keylen = n_powers*sizeof (QsPower);
+		const QsPower* pwrs = qs_integral_powers( in );
+
+		struct QsDbEntry* data = qs_db_get( source,(char*)pwrs,keylen );
+
+		if( data ) {
+			result = qs_expression_new_from_binary( data->val,data->vallen,order );
+			// The "equivalence system" means that if the identity for integral I
+			// is of the form 1*A, it actually means 1*A + (-1)*I
+			if( qs_expression_n_terms( result )==1 && qs_coefficient_is_one( qs_expression_coefficient( result,0 ) ) )
+				qs_expression_add( result,qs_coefficient_new_from_binary( "-1",2 ),m->integrals[ i ].integral );
+		}
+
+		qs_db_entry_destroy( data );
+		qs_db_destroy( source );
 	}
 
-	qs_db_entry_free( data );
-	qs_db_destroy( source );
-
-	return result;
-}
-
-QsReflist* qs_integral_mgr_load( QsIntegralMgr* m,QsComponent i,unsigned* order ) {
-	if( m->integrals[ i ].master )
-		return NULL;
-
-	QsExpression* e = get_expression_from_db( m,i,order );
-	
-	if( !e ) {
+	if( !result )
 		m->integrals[ i ].master = true;
-		return NULL;
-	}
-
-	unsigned n = qs_expression_n_terms( e );
-
-	QsReflist* result = qs_reflist_new( n );
-
-	int j;
-	for( j = 0; j<n; j++ ) {
-		QsIntegral* integral = qs_expression_integral( e,j );
-		QsCoefficient* coefficient = qs_expression_coefficient( e,j );
-
-		qs_reflist_add( result,coefficient,qs_integral_mgr_manage( m,integral ) );
-	}
-
-	qs_expression_disband( e );
 
 	return result;
 }

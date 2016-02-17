@@ -40,7 +40,6 @@ struct QsPivotGraph {
 	QsEvaluator* ev;
 };
 
-static void qs_reflist_del( QsReflist*,unsigned );
 static bool forward_reduce_full( QsPivotGraph*,QsComponent,unsigned );
 static void schedule( QsPivotGraph* g,struct QsReference* );
 static void wait( QsPivotGraph* );
@@ -246,7 +245,7 @@ void qs_reflist_add( QsReflist* l,QsCoefficient* c,QsComponent i ) {
 	l->n_references++;
 }
 
-static void qs_reflist_del( QsReflist* l,unsigned index ) {
+void qs_reflist_del( QsReflist* l,unsigned index ) {
 	qs_coefficient_destroy( l->references[ index ].coefficient );
 	l->n_references--;
 
@@ -362,4 +361,21 @@ void qs_pivot_graph_destroy( QsPivotGraph* g ) {
 	qs_evaluator_destroy( g->ev );
 	free( g->components );
 	free( g );
+}
+
+void qs_reflist_destroy( QsReflist* l ) {
+	free( l->references );
+	free( l );
+}
+
+unsigned qs_reflist_n_refs( const QsReflist* l ) {
+	return l->n_references;
+}
+
+const QsCoefficient* qs_reflist_coefficient( QsReflist* l,unsigned i ) {
+	return l->references[ i ].coefficient;
+}
+
+const QsComponent qs_reflist_component( QsReflist* l,unsigned i ) {
+	return l->references[ i ].head;
 }

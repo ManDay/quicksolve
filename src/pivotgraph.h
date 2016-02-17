@@ -2,9 +2,7 @@
 #define _QS_PIVOT_GRAPH_H_
 
 #include "coefficient.h"
-
-typedef unsigned QsComponent;
-
+#include "component.h"
 
 typedef struct QsReflist QsReflist;
 
@@ -18,5 +16,10 @@ void qs_pivot_graph_register( QsPivotGraph*,char* const[ ],unsigned );
 void qs_pivot_graph_reduce( QsPivotGraph*,QsComponent );
 QsReflist* qs_reflist_new( unsigned );
 void qs_reflist_add( QsReflist*,QsCoefficient*,QsComponent );
+const QsComponent qs_reflist_component( QsReflist*,unsigned );
+const QsCoefficient* qs_reflist_coefficient( QsReflist*,unsigned );
+unsigned qs_reflist_n_refs( const QsReflist* );
+void qs_reflist_destroy( QsReflist* );
+void qs_reflist_del( QsReflist*,unsigned );
 
 #endif
