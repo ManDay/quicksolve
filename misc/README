@@ -1,0 +1,54 @@
+Graph-Basierter Maximaller Parallelismus
+
+Es wird zwischen drei regulären Operationen unterschieden:
+
+* Kürzen (Relay 1 edge, Pass 1 Node, rebase N edges)
+Die Umwandlung einer Kante von A zu B, wobei B N abgehende Kanten hat, in N Kanten.
+Rechnung: Multiplikation der beiden Koeffizienten
+Operanten: N 2-Kantensequenzen, gebildet aus der "relayed edge" und jeweils einer der N "rebased edges"
+
+* Zusammenpassen (Collect)
+Die Umwandlung von zwei Kanten zur gleichen Komponente in eine Kante
+Rechnung: Addition der beiden Koeffizienten
+Operanten: 1 Kantenpaar on dem Knoten zu dem referenzierten Knoten
+
+* Normalisieren (Normalize)
+Die Umwandlung einer Kante von einem Knoten zu sich selbst in keine Kante
+Rechnung: Division aller (anderen) Koeffizienten durch 1 + ...
+Operanten: Alle abgehenden Kanten vom Knoten
+
+Dazu kommt die nicht reguläre Operation des Pivotwechsels, die wir aber nicht benutzen.
+
+Kanten werden durch ihren Typ (Von-Zu) und Ihren Index (:Nummer) identifiziert. Cycle-Reintroductions werden nach Cycle-Länge in Ebenen unterteilt. Die Reintroduktion eines Kantentyps geht mit einer Änderung der anderen Kanten einher (weil sonst eine Reihe an Operationen einen Nullvektor erzeugt hätte, was nicht möglich ist, da sie linear unabhängig sind oder aber der Koeffizient 0 ist).
+
+Level-0-Reintroduction:
+Eine Kante A-B wird eliminiert und durch B-B wieder eingeführt.
+Lösung: Selbst-Referenzen vor dem Passieren eines Knoten zusammenfassen.
+
+Level-1-Reintroduction:
+Eine Kante A-B wird auf B-C, und dann auf C-B weitergeleitet.
+Lösung: Erst Cycle kontrahieren: B-C eliminieren, resultiert in Selbst-Referenz von B. Dann Level-0-Reintroduction verhindern.
+
+Level-2-Reintroduction:
+Eine Kante A-B wird auf B-C, C-D, und dann D-B weitergeleitet.
+Lösung: Erst Cycle kontrahieren: B-C, C-D zu B-B eliminieren. Dann Level-0-Reintroduction verhindern.
+
+usw.
+
+Findet dennoch eine Level-N-Reintroduction statt, kann sie nach Redundanz-Tiefe klassifiziert werden. Die Reintroduction einer Kante ist nicht zwangsläufig eine redundante Operation, wenn die Kante nun einen anderen Koeffizienten hat, denn die erste nächste Weiterleitung ist damit noch einmalig. Wird ein Kantentyp durch Weiterleitung einer Kante A->X reintroduziert, ist die Tiefe D die Anzahl der Kanten im achronistischen Kantenpfad von A->X.
+
+Wir versuchen Reintroduction jeder Art trotzdem zu verhindern. Der Gaussche Algorithmus schafft dies durch teilung des Systemgraphens mittels Ordnung in einen vorwärts - und einen rückwärts-gerichteten DAG und dann Auflösung aller Zyklen in einem der beiden DAG. Der Czakonsche Algorithmus schafft dies durch Elimierung eines Pivots in allen anderen Pivots. Wir versuchen ganzheitliche Elimierung wie nach Czakon und Verhindern die Reintroduction absolut durch die Regel:
+
+Wird eine Kante bis einen Schritt vor einer Level-N-Reintroduction weitergeleitet und der Cycle erst dann detektiert, wenn bemerkt wird, dass die nächste Weiterleitung eine Reintroduction zur Folge hätte, so kann der Cycle nach der generischen lokalen Vorgabe gelöst werden:
+
+Leite eine Kante nicht weiter, wenn dies zu einer Reintroduction führen würde, i.e. A->B nicht weiterleiten wenn B auf C zeigt und A->C vorher eliminiert wurde. Stattdessen leite B->C vorher weiter.
+
+Wird der Cycle nach dieser lokalen Richtlinie gelöst nachdem er bereits einmal durchschritten wurde, ergibt sich einem Mehrfachüberdeckung (Redundanz) im Cycle, denn die Passierung von zwei Knoten im Cycle ist Redundant mit dem Relay der Kante vom ersten zum Zweiten.
+
+Der Performancegewinn oder -verlust der durch Zusammenfassen vor Weiterleiten mehrerer Kanten entsteht entspricht dem Vorteil oder Verlust von X*(Y+Z) gegenüber X*Y+X*Z. Erst die zweite Weiterleitung zweier zuvor nicht zusammengefassten Kanten birgt Redundanz nach D1 = C1*B*A redundant in B*A zu D2 = C2*B*A.
+
+
+
+Notiz:
+
+Reintroduction okay, so wie auch duplizierte Kanten okay sind - aber zweite Weiterleitung der Kante bringt rechnerische Redundanzen

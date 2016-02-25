@@ -41,14 +41,14 @@ target_link_libraries( db "${KYOTO_LIB}" )
 include_directories( "${KYOTO_INCLUDE_DIR}" )
 
 add_executable( quicksolve "quicksolve.c" )
-add_executable( ssrenderer "ssrenderer.c" )
+add_executable( mpanalyzer "mpanalyzer.c" )
 
 if( "${QS_BUILD_SSRENDERER}" )
+	add_executable( ssrenderer "ssrenderer.c" )
+
 	find_package( GTK2 REQUIRED )
 	include_directories( "${GTK2_INCLUDE_DIRS}" )
 	target_link_libraries( ssrenderer quicklib db "${GTK2_LIBRARIES}" )
 endif( )
 
 target_link_libraries( quicksolve quicklib db )
-
-
