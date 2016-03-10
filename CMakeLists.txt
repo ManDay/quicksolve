@@ -34,7 +34,7 @@ find_path( KYOTO_INCLUDE_DIR "kclangc.h" DOC "Directory of kclangc.h" )
 find_library( KYOTO_LIB "kyotocabinet" DOC "Path to libkyotocabinet" )
 
 add_library( db "src/db.c" )
-add_library( quicklib "src/integralmgr.c" "src/integral.c" "src/coefficient.c" "src/expression.c" "src/print.c" "src/pivotgraph.c" )
+add_library( quicklib "src/integralmgr.c" "src/integral.c" "src/coefficient.c" "src/expression.c" "src/print.c" "src/adog.c" "src/reflist.c" )
 
 target_link_libraries( db "${KYOTO_LIB}" )
 
@@ -51,4 +51,4 @@ if( "${QS_BUILD_SSRENDERER}" )
 	target_link_libraries( ssrenderer quicklib db "${GTK2_LIBRARIES}" )
 endif( )
 
-target_link_libraries( quicksolve quicklib db )
+target_link_libraries( quicksolve quicklib db pthread )

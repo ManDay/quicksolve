@@ -98,10 +98,6 @@ struct NodeStorage* new_from_file( FILE* in,unsigned edge_stride ) {
 			field_no++;
 			field = strtok( NULL," \t\n" );
 		}
-
-		free( line );
-		line = NULL;
-		n = 0;
 	}
 	free( line );
 

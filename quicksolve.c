@@ -6,7 +6,7 @@
 
 #include "src/integral.h"
 #include "src/integralmgr.h"
-#include "src/pivotgraph.h"
+#include "src/adog.h"
 #include "src/print.h"
 
 const char const usage[ ]= "The Source is the doc.";
@@ -61,34 +61,25 @@ int main( const int argc,char* const argv[ ] ) {
 	if( outfilename )
 		outfile = fopen( outfilename,"w" );
 
+	// Reap fermat processes immediately
+	signal( SIGCHLD,SIG_IGN );
+
 	ssize_t chars;
 	size_t N = 0;
 	char* buffer = NULL;
 
 	QsIntegralMgr* mgr = qs_integral_mgr_new( "idPR",".dat#type=kch" );
-	QsPivotGraph* sys = qs_pivot_graph_new( mgr,(QsLoadFunction)loader );
+	QsAdog* dog = qs_adog_new_with_size( num_processors,(QsLoadFunction)loader,mgr,123 );
 	QsPrint* printer = qs_print_new( );
-
-	qs_pivot_graph_register( sys,argv+optind+1,argc-optind-1 );
-
-	// Reap fermat processes immediately
-	signal( SIGCHLD,SIG_IGN );
 
 	while( ( chars = getline( &buffer,&N,infile ) )!=-1 ) {
 		QsIntegral* i = qs_integral_new_from_string( buffer );
-		QsComponent id = qs_integral_mgr_manage( mgr,qs_integral_cpy( i ) );
-
-		qs_pivot_graph_reduce( sys,id );
-
-		/*if( e ) {
-			fprintf( outfile,"fill %s = %s;\n",qs_print_generic_to_string( printer,i,(QsPrintFunction)qs_integral_print ),qs_print_generic_to_string( printer,e,(QsPrintFunction)qs_expression_print ) );
-			qs_expression_destroy( e );
-		}*/
-
+		//QsComponent id = qs_integral_mgr_manage( mgr,qs_integral_cpy( i ) );
 		qs_integral_destroy( i );
 	}
 
 	qs_print_destroy( printer );
+	qs_adog_destroy( dog );
 	qs_integral_mgr_destroy( mgr );
 
 	free( buffer );

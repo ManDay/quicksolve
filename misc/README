@@ -35,11 +35,11 @@ Lösung: Erst Cycle kontrahieren: B-C, C-D zu B-B eliminieren. Dann Level-0-Rein
 
 usw.
 
-Findet dennoch eine Level-N-Reintroduction statt, kann sie nach Redundanz-Tiefe klassifiziert werden. Die Reintroduction einer Kante ist nicht zwangsläufig eine redundante Operation, wenn die Kante nun einen anderen Koeffizienten hat, denn die erste nächste Weiterleitung ist damit noch einmalig. Wird ein Kantentyp durch Weiterleitung einer Kante A->X reintroduziert, ist die Tiefe D die Anzahl der Kanten im achronistischen Kantenpfad von A->X.
+Findet dennoch eine Level-N-Reintroduction statt, kann sie nach Redundanz-Tiefe klassifiziert werden. Die Reintroduction einer Kante ist nicht zwangsläufig eine redundante Operation, wenn die Kante nun einen anderen Koeffizienten hat, denn die erste nächste Weiterleitung ist damit noch einmalig. Wird ein Kantentyp durch Weiterleitung einer Kante A->X reintroduziert, ist die Tiefe D der Redundanzgrad aus allen redundanten, mit der letzten Kante verbundenen Unterpfaden im achronistischen Kantenpfad von A->X. Eine nicht redundante Reintroduction hat damit Redundanz-Tiefe 0, während eine wiederholte Level-N-Reintroduction am gleichen Knoten Redundanzgrad N hat.
 
-Wir versuchen Reintroduction jeder Art trotzdem zu verhindern. Der Gaussche Algorithmus schafft dies durch teilung des Systemgraphens mittels Ordnung in einen vorwärts - und einen rückwärts-gerichteten DAG und dann Auflösung aller Zyklen in einem der beiden DAG. Der Czakonsche Algorithmus schafft dies durch Elimierung eines Pivots in allen anderen Pivots. Wir versuchen ganzheitliche Elimierung wie nach Czakon und Verhindern die Reintroduction absolut durch die Regel:
+Wir versuchen Reintroduction jeder Art trotzdem zu verhindern. Der Gaussche Algorithmus schafft dies durch teilung des Systemgraphens mittels Ordnung in einen vorwärts - und einen rückwärts-gerichteten DAG und dann Auflösung aller Zyklen in einem der beiden DAG. Dieser Prozess ist redundanzfrei! Der Czakonsche Algorithmus schafft dies durch Elimierung eines Pivots in allen anderen Pivots. Dies entspricht der ad-hoc und nicht immer redundanzfreien Regel des "letzten Schritts", für "Introduction" zusätzlich zu Reintroduction mit einer Redundanztiefe größer 0.
 
-Wird eine Kante bis einen Schritt vor einer Level-N-Reintroduction weitergeleitet und der Cycle erst dann detektiert, wenn bemerkt wird, dass die nächste Weiterleitung eine Reintroduction zur Folge hätte, so kann der Cycle nach der generischen lokalen Vorgabe gelöst werden:
+Wird eine Kante bis einen Schritt vor einer Level-N-Reintroduction weitergeleitet und der Cycle erst dann detektiert, wenn bemerkt wird, dass die nächste Weiterleitung eine Reintroduction zur Folge hätte, so kann der Cycle nach der generischen lokalen Vorgabe des "letzten Schritts" gelöst werden:
 
 Leite eine Kante nicht weiter, wenn dies zu einer Reintroduction führen würde, i.e. A->B nicht weiterleiten wenn B auf C zeigt und A->C vorher eliminiert wurde. Stattdessen leite B->C vorher weiter.
 
@@ -47,8 +47,25 @@ Wird der Cycle nach dieser lokalen Richtlinie gelöst nachdem er bereits einmal 
 
 Der Performancegewinn oder -verlust der durch Zusammenfassen vor Weiterleiten mehrerer Kanten entsteht entspricht dem Vorteil oder Verlust von X*(Y+Z) gegenüber X*Y+X*Z. Erst die zweite Weiterleitung zweier zuvor nicht zusammengefassten Kanten birgt Redundanz nach D1 = C1*B*A redundant in B*A zu D2 = C2*B*A.
 
+==============
+LÖSUNGSMETHODE
+==============
+
+Die Ergebnisse des numerischen Durchlaufs beinhalten keine numerische Information über die Koeffizienten zu einem Pivot außer, dass der Koeffizient zum Pivot selbst nicht 0 ist, wenn genau alle kleineren Pivots eliminiert wurden.
+
+Wie man an exemplarischen Durchläufen erkennt, finden Kürzungen statt, bzw. können statt finden. Bei einer Eliminierung nimmt die Wahrscheinlichkeit einer Kürzung als Richtlinie gesehen, mit der Anzahl der von beiden Zeilen gleichzeitig referenzierten Komponenten zu. Es ist deshalb günstig, in jedem Schritt mit möglichst start überlappenden "Zeilen" zu operieren.
+Andererseits ist die Eliminierung eines Pivots in mehreren Zeilen parallel möglich und die Eliminierung mehrerer Pivots in diversen Zeilen ist je nach Kopplung der Zeilen mehr oder weniger, interstaged- oder nicht interstaged mit/ohne Introductions und mit/ohne Reintroductions etwaiger Redundanztiefen möglich.
+
+Prinzipiell ist nur die Eliminierung eines einzelnen Pivots in einem Pivot sicher, nämlich jenen, der gewählt wurde. Andere Pivots können sich durch die Eliminierung Kürzen und werden somit nicht mehr benötigt.
+
+Die Wahl des Pivots sollte gemäßt dem Ziel, möglichst viele Kürzungen herzustellen, so erfolgen, dass sich die Koeffizienten des gewählten Pivots möglichst mit denen des vorheringen Pivots decken. Die Wahl des absolute ersten Pivots hingegen ist arbiträr.
+
+Die Eliminierungen sollten, vom am tiefsten referenzierten Pivot nach oben verlaufen, um Redundanz zu vermeiden. Das heißt, die Pfade aller Kanten sind möglichst kurz. Jede Weiterleitung einer Kante, bevor diese terminal ist, führt zu einer möglichen multiplikativen Redundanz.
+
+Sowohl Introductions (im Gegensatz zu Czakon) als auch, im äußersten Fall, Reintroductions mit Redundanz-Tiefe 0 (im Gegensatz zu Gauss und gängigen Methoden) sind erlaubt, wenn keine anderen parallel, sicheren Operationen anstehen.
+
+Ohne Preempting wird immer nur eine Kante auf einem Pivot gleichzeigt weitergeleitet, deshalb gibt es keine Blockierung zweier Collect Operationen auf diesem Pivot. Die Blockierung folgt demnach nur aus Dependenzen/Mutual locks der Koeffizienten.
+
+Im Allgemeinen führt die Wahl der Reihenfolge der Initialierung von Weiterleitungen durch deren Dependenzen zu einer induzierten Reihenfolge, welches wiederum die Reintroduction der Koeffizienten bestimmt (siehe einfachstes Beispiel {X}->A {X}->B A->B)
 
 
-Notiz:
-
-Reintroduction okay, so wie auch duplizierte Kanten okay sind - aber zweite Weiterleitung der Kante bringt rechnerische Redundanzen
