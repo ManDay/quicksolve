@@ -9,22 +9,22 @@ struct QsDb {
 };
 
 struct QsDbCursor {
-	QsDb* db;
+	QsDb db;
 	KCCUR* cur;
 };
 
-void qs_db_destroy( QsDb* db ) {
+void qs_db_destroy( QsDb db ) {
 	kcdbdel( db->db );
 	free( db );
 }
 
-void qs_db_cursor_destroy( QsDbCursor* cur ) {
+void qs_db_cursor_destroy( QsDbCursor cur ) {
 	kccurdel( cur->cur );
 	free( cur );
 }
 
-QsDb* qs_db_new( char* pathname,enum QsDbMode mode ) {
-	QsDb* result = malloc( sizeof (QsDb) );
+QsDb qs_db_new( char* pathname,enum QsDbMode mode ) {
+	QsDb result = malloc( sizeof (struct QsDb) );
 	result->db = kcdbnew( );
 
 	if( kcdbopen( result->db,pathname,mode==QS_DB_READ?KCOREADER:KCOWRITER ) )
@@ -34,8 +34,8 @@ QsDb* qs_db_new( char* pathname,enum QsDbMode mode ) {
 	return NULL;
 }
 
-QsDbCursor* qs_db_cursor_new( QsDb* db ) {
-	QsDbCursor* result = malloc( sizeof (QsDbCursor) );
+QsDbCursor qs_db_cursor_new( QsDb db ) {
+	QsDbCursor result = malloc( sizeof (struct QsDbCursor) );
 	result->db = db;
 	result->cur = kcdbcursor( db->db );
 	qs_db_cursor_reset( result );
@@ -43,7 +43,7 @@ QsDbCursor* qs_db_cursor_new( QsDb* db ) {
 	return result;
 }
 
-QsDbCursor* qs_db_cursor_reset( QsDbCursor* cur ) {
+QsDbCursor qs_db_cursor_reset( QsDbCursor cur ) {
 	kccurjump( cur->cur );
 
 	return cur;
@@ -59,7 +59,7 @@ struct QsDbEntry* create_entry( unsigned keylen,unsigned vallen ) {
 	return result;
 }
 
-struct QsDbEntry* qs_db_cursor_next( QsDbCursor* cur ) {
+struct QsDbEntry* qs_db_cursor_next( QsDbCursor cur ) {
 	char* keydata;
 	const char* val;
 	size_t keylen,vallen;
@@ -79,7 +79,7 @@ struct QsDbEntry* qs_db_cursor_next( QsDbCursor* cur ) {
 	return result;
 }
 
-struct QsDbEntry* qs_db_get( QsDb* db,const char* keyname,unsigned keylen ) {
+struct QsDbEntry* qs_db_get( QsDb db,const char* keyname,unsigned keylen ) {
 	int32_t vallen = kcdbcheck( db->db,keyname,keylen );
 	if( vallen!=-1 ) {
 		struct QsDbEntry* result = create_entry( keylen,vallen );

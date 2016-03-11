@@ -5,6 +5,8 @@ project( "QuickSolve" VERSION 1.0 LANGUAGES C )
 set( QS_INTEGRAL_POWERTYPE_VALID "char" "int" "long" )
 set( QS_DEBUG_LEVEL_VALID "0" "1" "2" "3" )
 set( QS_BUILD_SSRENDERER "ON" CACHE BOOL "Build the subsampling renderer" )
+set( QS_BUILD_QUICKSOLVE "ON" CACHE BOOL "Build Quicksolve" )
+set( QS_BUILD_TESTS "ON" CACHE BOOL "Build unit tests" )
 
 if( NOT "${QS_INTEGRAL_POWERTYPE}" IN_LIST QS_INTEGRAL_POWERTYPE_VALID )
 	set( QS_INTEGRAL_POWERTYPE "char" CACHE STRING "Type of Powers in Database ([char],int,long)" FORCE )
@@ -34,14 +36,16 @@ find_path( KYOTO_INCLUDE_DIR "kclangc.h" DOC "Directory of kclangc.h" )
 find_library( KYOTO_LIB "kyotocabinet" DOC "Path to libkyotocabinet" )
 
 add_library( db "src/db.c" )
-add_library( quicklib "src/integralmgr.c" "src/integral.c" "src/coefficient.c" "src/expression.c" "src/print.c" "src/adog.c" "src/reflist.c" )
+add_library( quicklib "src/integralmgr.c" "src/integral.c" "src/coefficient.c" "src/operand.c" "src/expression.c" "src/print.c" "src/reflist.c" )
 
 target_link_libraries( db "${KYOTO_LIB}" )
 
 include_directories( "${KYOTO_INCLUDE_DIR}" )
 
-add_executable( quicksolve "quicksolve.c" )
-add_executable( mpanalyzer "mpanalyzer.c" )
+if( "${QS_BUILD_QUICKSOLVE}" )
+	add_executable( quicksolve "quicksolve.c" )
+	target_link_libraries( quicksolve quicklib db pthread )
+endif( )
 
 if( "${QS_BUILD_SSRENDERER}" )
 	add_executable( ssrenderer "ssrenderer.c" )
@@ -51,4 +55,9 @@ if( "${QS_BUILD_SSRENDERER}" )
 	target_link_libraries( ssrenderer quicklib db "${GTK2_LIBRARIES}" )
 endif( )
 
-target_link_libraries( quicksolve quicklib db pthread )
+if( "${QS_BUILD_TESTS}" )
+	add_executable( test_aef "tests/aef.c" )
+
+	target_link_libraries( test_aef quicklib db pthread )
+endif( )
+

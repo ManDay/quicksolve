@@ -12,11 +12,11 @@ struct QsIntegral {
 	QsPower* powers;
 };
 
-QsIntegral* qs_integral_new_from_string( const char* s ) {
+QsIntegral qs_integral_new_from_string( const char* s ) {
 	const char* prototype_str = s+2;
 	char* power_end = strchr( s,'(' );
 
-	QsIntegral* result = malloc( sizeof (QsIntegral) );
+	QsIntegral result = malloc( sizeof (QsIntegral) );
 
 	result->prototype = strtoul( prototype_str,NULL,0 );
 	result->n_powers = 0;
@@ -35,8 +35,8 @@ QsIntegral* qs_integral_new_from_string( const char* s ) {
 	return result;
 }
 
-QsIntegral* qs_integral_new_from_binary( const char* data,unsigned len ) {
-	QsIntegral* result = malloc( sizeof (QsIntegral) );
+QsIntegral qs_integral_new_from_binary( const char* data,unsigned len ) {
+	QsIntegral result = malloc( sizeof (struct QsIntegral) );
 
 	char* powers_base;
 	result->prototype = strtoul( data+2,&powers_base,0 );
@@ -61,7 +61,7 @@ QsIntegral* qs_integral_new_from_binary( const char* data,unsigned len ) {
  * @param[callee-allocates] Pointer to string
  * @return Length of written string
  */
-unsigned qs_integral_print( const QsIntegral* i,char** b ) {
+unsigned qs_integral_print( const QsIntegral i,char** b ) {
 	int len = asprintf( b,"PR%u(",i->prototype );
 
 	int j;
@@ -81,7 +81,7 @@ unsigned qs_integral_print( const QsIntegral* i,char** b ) {
 	return len;
 }
 
-bool qs_integral_cmp( const QsIntegral* i1,const QsIntegral* i2 ) {
+bool qs_integral_cmp( const QsIntegral i1,const QsIntegral i2 ) {
 	if( i1->prototype!=i2->prototype || i1->n_powers!=i2->n_powers )
 		return true;
 
@@ -93,8 +93,8 @@ bool qs_integral_cmp( const QsIntegral* i1,const QsIntegral* i2 ) {
 	return false;
 }
 
-QsIntegral* qs_integral_cpy( const QsIntegral* i ) {
-	QsIntegral* result = malloc( sizeof (QsIntegral) );
+QsIntegral qs_integral_cpy( const QsIntegral i ) {
+	QsIntegral result = malloc( sizeof (struct QsIntegral) );
 	result->prototype = i->prototype;
 	result->n_powers = i->n_powers;
 	result->powers = malloc( i->n_powers*sizeof (QsPower) );
@@ -103,19 +103,19 @@ QsIntegral* qs_integral_cpy( const QsIntegral* i ) {
 	return result;
 }
 
-void qs_integral_destroy( QsIntegral* i ) {
+void qs_integral_destroy( QsIntegral i ) {
 	free( i->powers );
 	free( i );
 }
 
-const QsPrototype qs_integral_prototype( const QsIntegral* i ) {
+const QsPrototype qs_integral_prototype( const QsIntegral i ) {
 	return i->prototype;
 }
 
-unsigned qs_integral_n_powers( const QsIntegral* i ) {
+unsigned qs_integral_n_powers( const QsIntegral i ) {
 	return i->n_powers;
 }
 
-const QsPower* qs_integral_powers( const QsIntegral* i ) {
+const QsPower* qs_integral_powers( const QsIntegral i ) {
 	return i->powers;
 }

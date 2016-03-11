@@ -11,7 +11,7 @@
 #include "db.h"
 
 struct Target {
-	QsIntegral* integral;
+	QsIntegral integral;
 	bool master;
 };
 
@@ -23,19 +23,19 @@ struct QsIntegralMgr {
 	char* suffix;
 };
 
-QsExpression* qs_integral_mgr_load_expression( QsIntegralMgr* m,QsComponent i,unsigned* order ) {
+QsExpression qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,unsigned* order ) {
 	if( m->integrals[ i ].master )
 		return NULL;
 
 	char* filename;
-	QsIntegral* in = m->integrals[ i ].integral;
+	QsIntegral in = m->integrals[ i ].integral;
 	asprintf( &filename,"%s%i%s",m->prefix,qs_integral_prototype( in ),m->suffix );
 
-	QsDb* source = qs_db_new( filename,QS_DB_READ );
+	QsDb source = qs_db_new( filename,QS_DB_READ );
 
 	free( filename );
 
-	QsExpression* result = NULL;
+	QsExpression result = NULL;
 
 	if( source ) {
 		unsigned n_powers = qs_integral_n_powers( in );
@@ -63,12 +63,12 @@ QsExpression* qs_integral_mgr_load_expression( QsIntegralMgr* m,QsComponent i,un
 	return result;
 }
 
-QsIntegralMgr* qs_integral_mgr_new( const char* prefix,const char* suffix ) {
+QsIntegralMgr qs_integral_mgr_new( const char* prefix,const char* suffix ) {
 	return qs_integral_mgr_new_with_size( prefix,suffix,1 );
 }
 
-QsIntegralMgr* qs_integral_mgr_new_with_size( const char* prefix,const char* suffix,unsigned prealloc ) {
-	QsIntegralMgr* result = malloc( sizeof (QsIntegralMgr) );
+QsIntegralMgr qs_integral_mgr_new_with_size( const char* prefix,const char* suffix,unsigned prealloc ) {
+	QsIntegralMgr result = malloc( sizeof (struct QsIntegralMgr) );
 	result->n_integrals = 0;
 	result->allocated = prealloc;
 	result->integrals = malloc( prealloc*sizeof (struct Target) );
@@ -87,7 +87,7 @@ QsIntegralMgr* qs_integral_mgr_new_with_size( const char* prefix,const char* suf
  * @param[transfer full] The integral to manage
  * @return The uniquely assigned Id of the Integral
  */
-QsComponent qs_integral_mgr_manage( QsIntegralMgr* g,QsIntegral* i ) {
+QsComponent qs_integral_mgr_manage( QsIntegralMgr g,QsIntegral i ) {
 	int j = 0;
 	while( j<g->n_integrals && qs_integral_cmp( g->integrals[ j ].integral,i ) )
 		j++;
@@ -106,7 +106,7 @@ QsComponent qs_integral_mgr_manage( QsIntegralMgr* g,QsIntegral* i ) {
 	return j;
 }
 
-void qs_integral_mgr_destroy( QsIntegralMgr* m ) {
+void qs_integral_mgr_destroy( QsIntegralMgr m ) {
 	int j;
 	for( j = 0; j<m->n_integrals; j++ )
 		qs_integral_destroy( m->integrals[ j ].integral );

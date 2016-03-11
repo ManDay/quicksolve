@@ -5,8 +5,8 @@
 #include <stdio.h>
 
 struct Term {
-	QsIntegral* integral;
-	QsCoefficient* coefficient;
+	QsIntegral integral;
+	QsCoefficient coefficient;
 };
 
 struct QsExpression {
@@ -15,8 +15,8 @@ struct QsExpression {
 	struct Term* terms;
 };
 
-QsExpression* qs_expression_new_from_binary( const char* data,unsigned len,unsigned* id ) {
-	QsExpression* result = malloc( sizeof (QsExpression) );
+QsExpression qs_expression_new_from_binary( const char* data,unsigned len,unsigned* id ) {
+	QsExpression result = malloc( sizeof (QsExpression) );
 	result->n_terms = 0;
 	result->allocated = 0;
 	result->terms = malloc( 0 );
@@ -28,10 +28,10 @@ QsExpression* qs_expression_new_from_binary( const char* data,unsigned len,unsig
 		const char* base = data+c;
 		int len_integral = *( (int*)base );
 
-		QsIntegral* integral = qs_integral_new_from_binary( base+sizeof (int),len_integral );
+		QsIntegral integral = qs_integral_new_from_binary( base+sizeof (int),len_integral );
 
 		int len_coefficient = *( (int*)( base+sizeof (int)+len_integral ) );
-		QsCoefficient* coefficient = qs_coefficient_new_from_binary( base+2*sizeof (int)+len_integral,len_coefficient );
+		QsCoefficient coefficient = qs_coefficient_new_from_binary( base+2*sizeof (int)+len_integral,len_coefficient );
 
 		qs_expression_add( result,coefficient,integral );
 
@@ -44,8 +44,8 @@ QsExpression* qs_expression_new_from_binary( const char* data,unsigned len,unsig
 	return result;
 }
 
-QsExpression* qs_expression_new_with_size( unsigned size ) {
-	QsExpression* result = malloc( sizeof (QsExpression) );
+QsExpression qs_expression_new_with_size( unsigned size ) {
+	QsExpression result = malloc( sizeof (struct QsExpression) );
 	result->n_terms = 0;
 	result->terms = malloc( size*sizeof (struct Term) );
 	result->allocated = size;
@@ -53,11 +53,11 @@ QsExpression* qs_expression_new_with_size( unsigned size ) {
 	return result;
 }
 
-unsigned qs_expression_n_terms( const QsExpression* e ) {
+unsigned qs_expression_n_terms( const QsExpression e ) {
 	return e->n_terms;
 }
 
-QsIntegral* qs_expression_integral( const QsExpression* e,unsigned i ) {
+QsIntegral qs_expression_integral( const QsExpression e,unsigned i ) {
 	return e->terms[ i ].integral;
 }
 
@@ -71,11 +71,11 @@ QsIntegral* qs_expression_integral( const QsExpression* e,unsigned i ) {
  * @Param The index of the coefficient
  * @return[transfer none] The coefficient
  */
-QsCoefficient* qs_expression_coefficient( const QsExpression* e,unsigned c ) {
+QsCoefficient qs_expression_coefficient( const QsExpression e,unsigned c ) {
 	return e->terms[ c ].coefficient;
 }
 
-void qs_expression_add( QsExpression* e,QsCoefficient* c,QsIntegral* i ) {
+void qs_expression_add( QsExpression e,QsCoefficient c,QsIntegral i ) {
 	if( e->n_terms==e->allocated ) {
 		e->terms = realloc( e->terms,( e->n_terms+1 )*sizeof (struct Term) );
 		e->allocated++;
@@ -86,7 +86,7 @@ void qs_expression_add( QsExpression* e,QsCoefficient* c,QsIntegral* i ) {
 	new->coefficient = c;
 }
 
-void qs_expression_destroy( QsExpression* e ) {
+void qs_expression_destroy( QsExpression e ) {
 	int j;
 	for( j = 0; j<e->n_terms; j++ ) {
 		qs_integral_destroy( e->terms[ j ].integral );
@@ -102,12 +102,12 @@ void qs_expression_destroy( QsExpression* e ) {
  *
  * @param This
  */
-void qs_expression_disband( QsExpression* e ) {
+void qs_expression_disband( QsExpression e ) {
 	free( e->terms );
 	free( e );
 }
 
-unsigned qs_expression_print( const QsExpression* e,char** b ) {
+unsigned qs_expression_print( const QsExpression e,char** b ) {
 	*b = calloc( 1,1 );
 	unsigned len = 0;
 

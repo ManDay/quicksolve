@@ -1,3 +1,8 @@
+#ifndef _QS_COEFFICIENT_H_
+#define _QS_COEFFICIENT_H_
+
+#include <stdbool.h>
+
 typedef enum {
 	QS_OPERATION_ADD,
 	QS_OPERATION_SUB,
@@ -8,6 +13,7 @@ typedef enum {
 typedef void* QsCompound;
 typedef char* QsCoefficient;
 typedef struct QsEvaluator* QsEvaluator;
+typedef struct QsEvaluatorOptions* QsEvaluatorOptions;
 
 /** Discover callback for compounds
  *
@@ -35,4 +41,20 @@ typedef struct QsEvaluator* QsEvaluator;
  * @return The j-th operand of the compound or NULL if there is no j-th
  * operand in the compound.
  */
-typedef QsCompound(* QsCompoundDiscoverer )( QsCompound,unsigned,bool*,QsOperation );
+typedef QsCompound(* QsCompoundDiscoverer )( QsCompound,unsigned,bool*,QsOperation* );
+
+QsEvaluatorOptions qs_evaluator_options_new( );
+void qs_evaluator_options_add( QsEvaluatorOptions,const char*, ... );
+void qs_evaluator_options_destroy( QsEvaluatorOptions );
+
+QsEvaluator qs_evaluator_new( QsCompoundDiscoverer,QsEvaluatorOptions );
+void qs_evaluator_register( QsEvaluator,char* const[ ],unsigned );
+QsCoefficient qs_evaluator_evaluate( QsEvaluator,QsCompound,QsOperation );
+void qs_evaluator_destroy( QsEvaluator );
+
+QsCoefficient qs_coefficient_new_from_binary( const char*,unsigned );
+unsigned qs_coefficient_print( const QsCoefficient,char** );
+bool qs_coefficient_is_one( const QsCoefficient );
+void qs_coefficient_destroy( QsCoefficient );
+
+#endif
