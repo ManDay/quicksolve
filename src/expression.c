@@ -16,7 +16,7 @@ struct QsExpression {
 };
 
 QsExpression qs_expression_new_from_binary( const char* data,unsigned len,unsigned* id ) {
-	QsExpression result = malloc( sizeof (QsExpression) );
+	QsExpression result = malloc( sizeof (struct QsExpression) );
 	result->n_terms = 0;
 	result->allocated = 0;
 	result->terms = malloc( 0 );

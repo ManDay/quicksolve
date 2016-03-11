@@ -406,7 +406,7 @@ QsTerminal qs_operand_bake( QsOperand o,QsAEF queue,QsOperation op, ... ) {
 }
 
 QsIntermediate qs_operand_link( QsOperand o,QsOperation op, ... ) {
-	QsIntermediate result = malloc( sizeof (QsIntermediate) );
+	QsIntermediate result = malloc( sizeof (struct QsIntermediate) );
 
 	result->operand.refcount = 1;
 	result->operand.is_terminal = false;

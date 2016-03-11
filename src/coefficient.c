@@ -140,7 +140,7 @@ static void register_symbols( QsEvaluator e,unsigned n_symbols,struct Symbol sym
 
 
 QsEvaluator qs_evaluator_new( QsCompoundDiscoverer discover,QsEvaluatorOptions opts ) {
-	QsEvaluator result = malloc( sizeof (QsEvaluator) );
+	QsEvaluator result = malloc( sizeof (struct QsEvaluator) );
 	result->discover = discover;
 	
 	int in_pipe[ 2 ],out_pipe[ 2 ];
@@ -239,7 +239,7 @@ void qs_evaluator_destroy( QsEvaluator e ) {
 }
 
 QsCoefficient qs_coefficient_new_from_binary( const char* data,unsigned size ) {
-	QsCoefficient result = malloc( sizeof (QsCoefficient) );
+	QsCoefficient result = malloc( sizeof (char*) );
 
 	result = malloc( size+1 );
 	memcpy( result,data,size );

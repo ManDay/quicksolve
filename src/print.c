@@ -8,14 +8,14 @@ struct QsPrint {
 	char** printspaces;
 };
 
-QsPrint* qs_print_new( ) {
-	QsPrint* res = malloc( sizeof (QsPrint) );
+QsPrint qs_print_new( ) {
+	QsPrint res = malloc( sizeof (struct QsPrint) );
 	res->n_prints = 0;
 	res->printspaces = malloc( 0 );
 	return res;
 }
 
-char* qs_print_generic_to_string( QsPrint* p,const void* obj,QsPrintFunction f ) {
+char* qs_print_generic_to_string( QsPrint p,const void* obj,QsPrintFunction f ) {
 
 	p->printspaces = realloc( p->printspaces,( p->n_prints+1 )*sizeof (char*) );
 
@@ -27,7 +27,7 @@ char* qs_print_generic_to_string( QsPrint* p,const void* obj,QsPrintFunction f )
 	return target;
 }
 
-void qs_print_destroy( QsPrint* p ) {
+void qs_print_destroy( QsPrint p ) {
 	int i;
 	for( i = 0; i<p->n_prints; i++ )
 		free( p->printspaces[ i ] );

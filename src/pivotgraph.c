@@ -12,12 +12,6 @@ struct QsReference {
 	QsCoefficient* coefficient;
 };
 
-struct QsReflist {
-	unsigned n_references;
-	unsigned allocated;
-	struct QsReference* references; ///< A simple array to keep memory simple
-};
-
 typedef struct {
 	QsReflist refs;
 	unsigned order;
@@ -92,7 +86,7 @@ void qs_pivot_graph_reduce( QsPivotGraph* g,QsComponent i ) {
 }
 
 QsReflist* qs_reflist_new( unsigned prealloc ) {
-	QsReflist* result = malloc( sizeof (QsReflist) );
+	QsReflist* result = malloc( sizeof (struct QsReflist) );
 	result->n_references = 0;
 	result->allocated = prealloc;
 	result->references = malloc( prealloc*sizeof (struct QsReference) );
@@ -165,7 +159,7 @@ QsPivotGraph* qs_pivot_graph_new( void* load_data,QsLoadFunction loader ) {
 }
 
 QsPivotGraph* qs_pivot_graph_new_with_size( void* load_data,QsLoadFunction loader,unsigned prealloc ) {
-	QsPivotGraph* result = malloc( sizeof (QsPivotGraph) );
+	QsPivotGraph result = malloc( sizeof (struct QsPivotGraph) );
 	result->n_components = 0;
 	result->allocated = prealloc;
 	result->components = malloc( prealloc*sizeof (Pivot*) );
@@ -189,7 +183,7 @@ void qs_pivot_graph_register( QsPivotGraph* g,char* const symbols[ ],unsigned n_
  * @param The integral/pivot to associate the expression to
  * @param[transfer full] The expression
  */
-void qs_pivot_graph_add_pivot( QsPivotGraph* g,QsComponent i,QsReflist* l,unsigned order ) {
+void qs_pivot_graph_add_pivot( QsPivotGraph* g,QsComponent i,QsReflist l,unsigned order ) {
 
 	assert( !g->components[ i ] );
 	g->components[ i ]= malloc( sizeof (Pivot) );
@@ -198,8 +192,7 @@ void qs_pivot_graph_add_pivot( QsPivotGraph* g,QsComponent i,QsReflist* l,unsign
 	p->infinite = false;
 	p->index = -1;
 	p->order = order;
-	memcpy( &( p->refs ),l,sizeof (QsReflist) );
-	free( l );
+	p->refs = l;
 }
 
 void qs_pivot_graph_destroy( QsPivotGraph* g ) {
@@ -213,19 +206,3 @@ void qs_pivot_graph_destroy( QsPivotGraph* g ) {
 	free( g );
 }
 
-void qs_reflist_destroy( QsReflist* l ) {
-	free( l->references );
-	free( l );
-}
-
-unsigned qs_reflist_n_refs( const QsReflist* l ) {
-	return l->n_references;
-}
-
-const QsCoefficient* qs_reflist_coefficient( QsReflist* l,unsigned i ) {
-	return l->references[ i ].coefficient;
-}
-
-const QsComponent qs_reflist_component( QsReflist* l,unsigned i ) {
-	return l->references[ i ].head;
-}
