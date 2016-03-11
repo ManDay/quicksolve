@@ -71,8 +71,9 @@ void qs_evaluator_register( QsEvaluator e,char* const symbols[ ],unsigned n_symb
 	fermat_sync( e,NULL );
 }
 
-QsEvaluator qs_evaluator_new( ) {
+QsEvaluator qs_evaluator_new( QsCompoundDiscoverer discover ) {
 	QsEvaluator* result = malloc( sizeof (QsEvaluator) );
+	result->discover = discover;
 	
 	int in_pipe[ 2 ],out_pipe[ 2 ];
 
