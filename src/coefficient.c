@@ -239,9 +239,7 @@ void qs_evaluator_destroy( QsEvaluator e ) {
 }
 
 QsCoefficient qs_coefficient_new_from_binary( const char* data,unsigned size ) {
-	QsCoefficient result = malloc( sizeof (char*) );
-
-	result = malloc( size+1 );
+	QsCoefficient result = malloc( size+1 );
 	memcpy( result,data,size );
 	result[ size ]= '\0';
 
