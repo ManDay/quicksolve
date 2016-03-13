@@ -22,8 +22,29 @@ void qs_operand_unref( QsOperand );
  * @return The resulting terminal
  */
 QsTerminal qs_operand_new_from_coefficient( QsCoefficient );
+
+/** Bake coefficient
+ *
+ * Bakes a new QsTerminal from the given operands. Every operand of
+ * QsTerminal-type is refcount increased whereas every operand of
+ * QsIntermediate-type is consumed.
+ *
+ * @param First operand
+ * @param AEF for evaluation
+ * @param Further operands
+ */
 QsTerminal qs_operand_bake( QsOperand,QsAEF,QsOperation, ... );
 
+/** Link coefficient
+ *
+ * Links a new QsIntermediate from the given operands. Every operand of
+ * QsTerminal-type is refcount increased whereas every operand of
+ * QsIntermediate-type is consumed.
+ *
+ * @param First operand
+ * @param AEF for evaluation
+ * @param Further operands
+ */
 QsIntermediate qs_operand_link( QsOperand,QsOperation, ... );
 
 /** Wait for the evaluation of a QsTerminal

@@ -396,9 +396,12 @@ QsTerminal qs_operand_bake( QsOperand o,QsAEF queue,QsOperation op, ... ) {
 			DBG_PRINT( "QsTerminal %p\n",1,next );
 
 			terminal_add_dependency( next,result );
+			qs_operand_ref( next_raw );
 		} else {
 			QsIntermediate next = (QsIntermediate)next_raw;
-			DBG_PRINT( "QsIntermediate %p which carries tails cache\n",1,next );
+			// Assert this intermediate is not already consumed (redundancy)
+			assert( next->cache_tails );
+			DBG_PRINT( "QsIntermediate %p which carries tails cache of %i tail poitners\n",1,next,next->cache_tails->n_operands );
 
 			int j;
 			for( j = 0; j<next->cache_tails->n_operands; j++ ) {
@@ -412,7 +415,7 @@ QsTerminal qs_operand_bake( QsOperand o,QsAEF queue,QsOperation op, ... ) {
 			next->cache_tails = NULL;
 		}
 
-		e->operands[ e->n_operands ]= qs_operand_ref( next_raw );
+		e->operands[ e->n_operands ]= next_raw;
 		e->n_operands++;
 
 	} while( ( next_raw = va_arg( va,QsOperand ) ) );
@@ -449,6 +452,7 @@ QsIntermediate qs_operand_link( QsOperand o,QsOperation op, ... ) {
 			DBG_PRINT( "QsTerminal %p, adding to own tails cache\n",1,next );
 
 			terminal_list_append( result->cache_tails,&next,1 );
+			qs_operand_ref( next_raw );
 		} else {
 			QsIntermediate next = (QsIntermediate)next_raw;
 			DBG_PRINT( "QsIntermediate %p, merging its tails cache into own tails cache and freeing the former\n",1,next );
@@ -459,7 +463,7 @@ QsIntermediate qs_operand_link( QsOperand o,QsOperation op, ... ) {
 			next->cache_tails = NULL;
 		}
 
-		e->operands[ e->n_operands ]= qs_operand_ref( next_raw );
+		e->operands[ e->n_operands ]= next_raw;
 		e->n_operands++;
 
 	} while( ( next_raw = va_arg( va,QsOperand ) ) );
@@ -483,8 +487,6 @@ static void expression_clean( Expression e ) {
 }
 
 static void baked_expression_destroy( BakedExpression b ) {
-	assert( b->n_baked_deps==0 );
-
 	expression_clean( &b->expression );
 	free( b->baked_deps );
 	free( b );
