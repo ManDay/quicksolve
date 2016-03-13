@@ -58,11 +58,14 @@ int main( int argv,char* argc[ ] ) {
 		"1/7",
 		"ep*x/5+2",
 		"100*x^4/ep*2+(ep*x)",
-		"5/x/ep^3" // */
+		"5/x/ep^3"
 	};
 
-	unsigned n_workers = 1;
-	unsigned targets_max = 10;
+	unsigned p_terminal = 100;
+	unsigned p_intermediate = 50;
+
+	unsigned n_workers = 4;
+	unsigned targets_max = 260;
 
 	unsigned n_symb_strings = sizeof (symb_strings)/sizeof symb_strings[ 0 ];
 	const unsigned n_coeffs = sizeof (coeff_strings)/sizeof coeff_strings[ 0 ];
@@ -122,8 +125,9 @@ int main( int argv,char* argc[ ] ) {
 			combination[ j ]= target.value;
 		}
 
-		bool bake = rand( )%2;
+		bool bake = rand( )%( p_terminal + p_intermediate )<p_terminal;
 		if( bake ) {
+			printf( " (baked)\n" );
 			QsTerminal result;
 
 			CC(1) qs_operand_bake( combination[ 0 ],aef,op,NULL );
@@ -132,10 +136,9 @@ int main( int argv,char* argc[ ] ) {
 			CCC(4) qs_operand_bake( combination[ 0 ],aef,op,combination[ 1 ],combination[ 2 ],combination[ 3 ],NULL );
 			ECC()
 
-			printf( " (baked)" );
-
 			push( &terminals,(struct Operand){ name,(QsOperand)result } );
 		} else {
+			printf( "\n" );
 			QsIntermediate result;
 
 			CC(1) qs_operand_link( combination[ 0 ],op,NULL );
@@ -146,15 +149,13 @@ int main( int argv,char* argc[ ] ) {
 
 			push( &intermediates,(struct Operand){ name,(QsOperand)result } );
 		}
-
-		printf( "\n" );
 		name++;
 	}
 
 	printf( "Closing intermediates...\n" );
 	while( intermediates.n_operands ) {
 		struct Operand target = pop_rand( &intermediates );
-		printf( "c%i = c%i",name,target.name );
+		printf( "c%i = c%i\n",name,target.name );
 		push( &terminals,(struct Operand){ name++,(QsOperand)( qs_operand_bake( target.value,aef,QS_OPERATION_ADD,NULL ) ) } );
 	}
 
