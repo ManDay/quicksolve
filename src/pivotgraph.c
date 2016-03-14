@@ -141,7 +141,6 @@ bool qs_pivot_graph_relay( QsPivotGraph g,QsComponent tail,QsComponent head,bool
 }
 
 QsTerminal qs_pivot_graph_collect( QsPivotGraph g,QsComponent tail,QsComponent head,bool bake ) {
-	DBG_PRINT( "Collecing edges to %i on pivot %i\n",0,head,tail );
 	Pivot* tail_pivot = g->components[ tail ];
 
 	unsigned allocated = 2;
@@ -151,25 +150,27 @@ QsTerminal qs_pivot_graph_collect( QsPivotGraph g,QsComponent tail,QsComponent h
 	QsTerminal result = NULL;
 
 	int j = 0;
-	while( j<tail_pivot->n_refs )
+	while( j<tail_pivot->n_refs ) {
 		if( tail_pivot->refs[ j ].head==head ) {
 			if( n_operands==allocated )
 				operands = realloc( operands,++allocated*sizeof (QsOperand) );
+
+			operands[ n_operands ]= tail_pivot->refs[ j ].coefficient;
 
 			if( n_operands==0 ) {
 				first = &tail_pivot->refs[ j ].coefficient;
 				j++;
 			} else
-				tail_pivot->refs[ j ] = tail_pivot->refs[ --tail_pivot->n_refs ];
+				tail_pivot->refs[ j ] = tail_pivot->refs[ --( tail_pivot->n_refs ) ];
 
-			operands[ n_operands ]= tail_pivot->refs[ j ].coefficient;
+			n_operands++;
 		} else
 			j++;
+	}
 
 	tail_pivot->refs = realloc( tail_pivot->refs,tail_pivot->n_refs*sizeof (struct Reference) );
 
 	if( n_operands>1 ) {
-		DBG_PRINT( " Combining %i edges into a single one\n",0,n_operands );
 		if( bake )
 			*first = (QsOperand)( result = qs_operand_bake( n_operands,operands,g->aef,QS_OPERATION_ADD ) );
 		else
@@ -223,36 +224,61 @@ void qs_pivot_graph_normalize( QsPivotGraph g,QsComponent target,bool bake ) {
 }
 
 bool qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,unsigned rc ) {
-	DBG_PRINT( "Solving for component %i\n",rc,i );
+	DBG_PRINT( "Solving pivotal line of pivot %i\n",rc,i );
 
 	if( !qs_pivot_graph_load( g,i ) )
 		return false;
 
 	Pivot* target = g->components[ i ];
+	unsigned order = target->order;
+
+	DBG_PRINT( " Pivot has order %i and contains:",rc,order );
 
 	int j;
-	QsComponent smallest = i;
-	for( j = 0; j<target->n_refs; j++ )
-		if( target->refs[ j ].head<smallest )
-			smallest = target->refs[ j ].head;
+	unsigned smallest = order;
+	QsComponent head;
 
-	if( smallest!=i ) {
-		qs_pivot_graph_collect( g,i,smallest,true );
-		if( qs_pivot_graph_solve( g,smallest,rc + 1 ) )
-			qs_pivot_graph_relay( g,i,smallest,false );
+	for( j = 0; j<target->n_refs; j++ )
+		if( qs_pivot_graph_load( g,target->refs[ j ].head ) ) {
+			Pivot* head_candidate = g->components[ target->refs[ j ].head ];
+
+			DBG_APPEND( " %i",head_candidate->order );
+			if( head_candidate->order<smallest ) {
+				smallest = head_candidate->order;
+				head = target->refs[ j ].head;
+			}
+		}
+
+	DBG_APPEND( "\n" );
+
+	if( smallest!=order ) {
+		DBG_PRINT( " Pivotal line of %i (order %i) contains smallest smaller pivot %i (order %i)\n",rc,i,order,head,g->components[ head ]->order );
+		DBG_PRINT( " Collecting all edges %i->%i\n",rc,i,head );
+		qs_pivot_graph_collect( g,i,head,true );
+		if( qs_pivot_graph_solve( g,head,rc + 1 ) ) {
+			DBG_PRINT( " Relaying %i->%i\n",rc,i,head );
+			qs_pivot_graph_relay( g,i,head,false );
+		}
 
 		return qs_pivot_graph_solve( g,i,rc );
 	} else {
+		DBG_PRINT( " All pivots smaller than %i (order %i) successfully eliminated\n",rc,i,order );
+		DBG_PRINT( " Collecting all self-edges on %i\n",rc,i );
 		QsTerminal divisor = qs_pivot_graph_collect( g,i,i,true );
 
-		if( !divisor )
+		if( !divisor ) {
+			DBG_PRINT( "  No collection took place, re-baking self-edge\n",rc );
+
 			for( j = 0; j<target->n_refs; j++ )
-				if( target->refs[ j ].head==i ) {
-					divisor = qs_operand_bake( 1,&target->refs[ j ].coefficient,g->aef,QS_OPERATION_ADD );
-					qs_operand_unref( target->refs[ j ].coefficient );
-					target->refs[ j ].coefficient = (QsOperand)divisor;
+				if( target->refs[ j ].head==i )
 					break;
-				}
+
+			assert( j<target->n_refs );
+
+			divisor = qs_operand_bake( 1,&target->refs[ j ].coefficient,g->aef,QS_OPERATION_ADD );
+			qs_operand_unref( target->refs[ j ].coefficient );
+			target->refs[ j ].coefficient = (QsOperand)divisor;
+		}
 
 		assert( divisor );
 		QsCoefficient divisor_result = qs_terminal_wait( divisor );
@@ -260,6 +286,7 @@ bool qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,unsigned rc ) {
 		assert( !qs_coefficient_is_zero( divisor_result ) );
 		qs_pivot_graph_normalize( g,i,true );
 
+		DBG_PRINT( " Done with pivot %i\n",rc,i );
 		return true;
 	}
 }
