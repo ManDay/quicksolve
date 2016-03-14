@@ -141,11 +141,12 @@ bool qs_pivot_graph_relay( QsPivotGraph g,QsComponent tail,QsComponent head,bool
 }
 
 QsTerminal qs_pivot_graph_collect( QsPivotGraph g,QsComponent tail,QsComponent head,bool bake ) {
+	DBG_PRINT( "Collecing edges to %i on pivot %i\n",0,head,tail );
 	Pivot* tail_pivot = g->components[ tail ];
 
 	unsigned allocated = 2;
 	unsigned n_operands = 0;
-	QsOperand* operands = malloc( allocated );
+	QsOperand* operands = malloc( allocated*sizeof (QsOperand) );
 	QsOperand* first;
 	QsTerminal result = NULL;
 
@@ -155,18 +156,20 @@ QsTerminal qs_pivot_graph_collect( QsPivotGraph g,QsComponent tail,QsComponent h
 			if( n_operands==allocated )
 				operands = realloc( operands,++allocated*sizeof (QsOperand) );
 
-			if( n_operands==0 )
+			if( n_operands==0 ) {
 				first = &tail_pivot->refs[ j ].coefficient;
-			else
+				j++;
+			} else
 				tail_pivot->refs[ j ] = tail_pivot->refs[ --tail_pivot->n_refs ];
 
 			operands[ n_operands ]= tail_pivot->refs[ j ].coefficient;
 		} else
 			j++;
 
-	tail_pivot->refs = realloc( tail_pivot->refs,tail_pivot->n_refs*sizeof (QsOperand) );
+	tail_pivot->refs = realloc( tail_pivot->refs,tail_pivot->n_refs*sizeof (struct Reference) );
 
 	if( n_operands>1 ) {
+		DBG_PRINT( " Combining %i edges into a single one\n",0,n_operands );
 		if( bake )
 			*first = (QsOperand)( result = qs_operand_bake( n_operands,operands,g->aef,QS_OPERATION_ADD ) );
 		else
@@ -219,8 +222,8 @@ void qs_pivot_graph_normalize( QsPivotGraph g,QsComponent target,bool bake ) {
 		}
 }
 
-bool qs_pivot_graph_solve( QsPivotGraph g,QsComponent i ) {
-	DBG_PRINT( "Solving for component %i\n",0,i );
+bool qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,unsigned rc ) {
+	DBG_PRINT( "Solving for component %i\n",rc,i );
 
 	if( !qs_pivot_graph_load( g,i ) )
 		return false;
@@ -235,12 +238,23 @@ bool qs_pivot_graph_solve( QsPivotGraph g,QsComponent i ) {
 
 	if( smallest!=i ) {
 		qs_pivot_graph_collect( g,i,smallest,true );
-		if( qs_pivot_graph_solve( g,smallest ) )
+		if( qs_pivot_graph_solve( g,smallest,rc + 1 ) )
 			qs_pivot_graph_relay( g,i,smallest,false );
 
-		return qs_pivot_graph_solve( g,i );
+		return qs_pivot_graph_solve( g,i,rc );
 	} else {
 		QsTerminal divisor = qs_pivot_graph_collect( g,i,i,true );
+
+		if( !divisor )
+			for( j = 0; j<target->n_refs; j++ )
+				if( target->refs[ j ].head==i ) {
+					divisor = qs_operand_bake( 1,&target->refs[ j ].coefficient,g->aef,QS_OPERATION_ADD );
+					qs_operand_unref( target->refs[ j ].coefficient );
+					target->refs[ j ].coefficient = (QsOperand)divisor;
+					break;
+				}
+
+		assert( divisor );
 		QsCoefficient divisor_result = qs_terminal_wait( divisor );
 
 		assert( !qs_coefficient_is_zero( divisor_result ) );

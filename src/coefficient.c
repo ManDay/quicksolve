@@ -196,7 +196,7 @@ static void submit_compound( QsEvaluator e,QsCompound x,QsOperation op ) {
 	QsOperation child_op;
 	unsigned j;
 	for( j = 0; ( child_raw = e->discover( x,j,&is_compound,&child_op ) ); j++ ) {
-		bool parens;
+		bool parens = false;
 
 		if( j!=0 ) {
 			if( op==QS_OPERATION_ADD )
@@ -217,7 +217,6 @@ static void submit_compound( QsEvaluator e,QsCompound x,QsOperation op ) {
 
 			parens = true;
 		}
-
 
 		if( parens )
 			fermat_submit( e,"(" );

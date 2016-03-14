@@ -154,6 +154,7 @@ int main( int argv,char* argc[ ] ) {
 		struct Operand target = pop_rand( &intermediates );
 		printf( "c%i = c%i\n",name,target.name );
 		push( &terminals,(struct Operand){ name++,(QsOperand)qs_operand_bake( 1,(QsOperand[ ]){ target.value },aef,QS_OPERATION_ADD ) } );
+		qs_operand_unref( target.value );
 	}
 
 	printf( "Waiting for terminals...\n" );

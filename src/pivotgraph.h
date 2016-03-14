@@ -20,7 +20,7 @@ typedef struct QsPivotGraph* QsPivotGraph;
 
 QsPivotGraph qs_pivot_graph_new( QsAEF,void*,QsLoadFunction );
 QsPivotGraph qs_pivot_graph_new_with_size( QsAEF,void*,QsLoadFunction,unsigned );
-bool qs_pivot_graph_solve( QsPivotGraph,QsComponent );
+bool qs_pivot_graph_solve( QsPivotGraph,QsComponent,unsigned );
 void qs_pivot_graph_destroy( QsPivotGraph );
 
 #endif

@@ -422,7 +422,7 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsAEF queue,QsOper
 			next->cache_tails = NULL;
 		}
 
-		e->operands[ e->n_operands ]= qs_operand_ref( next_raw );
+		e->operands[ k ]= qs_operand_ref( next_raw );
 	}
 
 	expression_independ( result );
@@ -462,7 +462,7 @@ QsIntermediate qs_operand_link( unsigned n_operands,QsOperand* os,QsOperation op
 			next->cache_tails = NULL;
 		}
 
-		e->operands[ e->n_operands ]= qs_operand_ref( next_raw );
+		e->operands[ k ]= qs_operand_ref( next_raw );
 	}
 
 	return result;
@@ -495,8 +495,15 @@ void qs_operand_unref( QsOperand o ) {
 
 			// We don't need to lock, since no one else is referencing the
 			// QsTerminal
+
+			// Destroying dangling QsIntermediates is likely an error
 			assert( target->is_coefficient );
-			qs_coefficient_destroy( target->value.coefficient );
+
+			if( target->is_coefficient )
+				qs_coefficient_destroy( target->value.coefficient );
+			else
+				baked_expression_destroy(  target->value.expression );
+
 			pthread_spin_destroy( &target->lock );
 		} else {
 			QsIntermediate target = (QsIntermediate)o;
