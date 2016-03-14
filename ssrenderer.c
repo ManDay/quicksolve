@@ -115,7 +115,7 @@ int main( const int argc,char* const argv[ ] ) {
 	for( j = 0; j<masters_allocated; j++ )
 		masters[ j ]= calloc( height,sizeof (struct MasterSector) );
 
-	QsIntegralMgr* m = qs_integral_mgr_new( "idPR",".dat#type=kch" );
+	QsIntegralMgr m = qs_integral_mgr_new( "idPR",".dat#type=kch" );
 
 	for( j = optind; j<argc; j++ ) {
 
@@ -127,18 +127,18 @@ int main( const int argc,char* const argv[ ] ) {
 			asprintf( &fullname,"%s#type=kch",argv[ j ] );
 		
 		DBG_PRINT( "Loading database with name '%s'\n",0,fullname );
-		QsDb* db = qs_db_new( fullname,QS_DB_READ );
+		QsDb db = qs_db_new( fullname,QS_DB_READ );
 
 		free( fullname );
 
 		if( db ) {
-			QsDbCursor* cur = qs_db_cursor_new( db );
+			QsDbCursor cur = qs_db_cursor_new( db );
 
 			struct QsDbEntry* row;
 			while( ( row = qs_db_cursor_next( cur ) ) ) {
 				if( memcmp( row->key,"generated",row->keylen )&& memcmp( row->key,"setup",row->keylen ) ) {
 					unsigned order;
-					QsExpression* e = qs_expression_new_from_binary( row->val,row->vallen,&order );
+					QsExpression e = qs_expression_new_from_binary( row->val,row->vallen,&order );
 
 					if( order<stat_min || stat_max==0 )
 						stat_min = order;
@@ -171,7 +171,7 @@ int main( const int argc,char* const argv[ ] ) {
 
 								if( !order_map.columns[ id ].loaded ) {
 									unsigned order_test;
-									QsExpression* e2 = qs_integral_mgr_load_expression( m,id,&order_test );
+									QsExpression e2 = qs_integral_mgr_load_expression( m,id,&order_test );
 
 									if( e2 ) {
 										column_order = order_test;

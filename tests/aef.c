@@ -80,7 +80,11 @@ int main( int argv,char* argc[ ] ) {
 	for( j = 0; j<n_symb_strings; j++ )
 		qs_evaluator_options_add( opts,symb_strings[ j ],NULL );
 
-	QsAEF aef = qs_aef_new( n_workers,opts );
+	QsAEF aef = qs_aef_new( );
+	for( j = 0; j<n_workers; j++ )
+		qs_aef_spawn( aef,opts );
+
+	qs_evaluator_options_destroy( opts );
 
 	printf( "Creating original QsCoefficients...\n" );
 	unsigned name = 0;

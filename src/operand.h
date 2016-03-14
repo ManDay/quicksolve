@@ -8,7 +8,8 @@ typedef struct QsTerminal* QsTerminal;
 typedef struct QsIntermediate* QsIntermediate;
 typedef struct QsAEF* QsAEF;
 
-QsAEF qs_aef_new( unsigned,QsEvaluatorOptions );
+QsAEF qs_aef_new( void );
+bool qs_aef_spawn( QsAEF,QsEvaluatorOptions );
 void qs_aef_destroy( QsAEF );
 
 QsOperand qs_operand_ref( QsOperand );

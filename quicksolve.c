@@ -3,29 +3,36 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <string.h>
 
 #include "src/integral.h"
 #include "src/integralmgr.h"
-#include "src/adog.h"
+#include "src/operand.h"
+#include "src/coefficient.h"
 #include "src/print.h"
+#include "src/pivotgraph.h"
 
 const char const usage[ ]= "The Source is the doc.";
 
-QsReflist* loader( QsIntegralMgr* m,QsComponent i,unsigned* order ) {
-	QsExpression* e = qs_integral_mgr_load_expression( m,i,order );
+struct QsReflist loader( QsIntegralMgr m,QsComponent i,unsigned* order ) {
+	QsExpression e = qs_integral_mgr_load_expression( m,i,order );
 	
-	if( !e )
-		return NULL;
+	if( !e ) {
+		struct QsReflist result = { 0,NULL };
+		return result;
+	}
 
 	unsigned n = qs_expression_n_terms( e );
 
-	QsReflist* result = qs_reflist_new( n );
+	struct QsReflist result = { n,malloc( n*sizeof (QsCoefficient) ) };
+
 	int j;
 	for( j = 0; j<n; j++ ) {
-		QsIntegral* integral = qs_expression_integral( e,j );
-		QsCoefficient* coefficient = qs_expression_coefficient( e,j );
+		QsIntegral integral = qs_expression_integral( e,j );
+		QsCoefficient coefficient = qs_expression_coefficient( e,j );
 
-		qs_reflist_add( result,coefficient,qs_integral_mgr_manage( m,integral ) );
+		result.references[ j ].coefficient = coefficient;
+		result.references[ j ].head = qs_integral_mgr_manage( m,integral );
 	}
 
 	qs_expression_disband( e );
@@ -64,25 +71,44 @@ int main( const int argc,char* const argv[ ] ) {
 	// Reap fermat processes immediately
 	signal( SIGCHLD,SIG_IGN );
 
+	QsEvaluatorOptions fermat_options = qs_evaluator_options_new( );
+
+	int j;
+	for( j = optind + 1; j<argc; j++ ) {
+		char* symbol = strtok( argv[ j ],"=" );
+		char* value = strtok( NULL,"" );
+		
+		if( value )
+			printf( "Registering %s substituted by %s\n",symbol,value );
+		else
+			printf( "Registering %s\n",symbol );
+
+		qs_evaluator_options_add( fermat_options,symbol,value );
+	}
+
+
+	QsIntegralMgr mgr = qs_integral_mgr_new( "idPR",".dat#type=kch" );
+	QsAEF aef = qs_aef_new( );
+	QsPivotGraph p = qs_pivot_graph_new( aef,mgr,(QsLoadFunction)loader );
+
+	for( j = 0; j<num_processors; j++ )
+		qs_aef_spawn( aef,fermat_options );
+
+	qs_evaluator_options_destroy( fermat_options );
+
 	ssize_t chars;
 	size_t N = 0;
 	char* buffer = NULL;
-
-	QsIntegralMgr* mgr = qs_integral_mgr_new( "idPR",".dat#type=kch" );
-	QsAdog* dog = qs_adog_new_with_size( num_processors,(QsLoadFunction)loader,mgr,123 );
-	QsPrint* printer = qs_print_new( );
-
 	while( ( chars = getline( &buffer,&N,infile ) )!=-1 ) {
-		QsIntegral* i = qs_integral_new_from_string( buffer );
-		//QsComponent id = qs_integral_mgr_manage( mgr,qs_integral_cpy( i ) );
-		qs_integral_destroy( i );
+		QsIntegral i = qs_integral_new_from_string( buffer );
+		QsComponent id = qs_integral_mgr_manage( mgr,i );
 	}
 
-	qs_print_destroy( printer );
-	qs_adog_destroy( dog );
-	qs_integral_mgr_destroy( mgr );
-
 	free( buffer );
+
+	qs_pivot_graph_destroy( p );
+	qs_aef_destroy( aef );
+	qs_integral_mgr_destroy( mgr );
 	
 	fclose( infile );
 	if( outfilename )

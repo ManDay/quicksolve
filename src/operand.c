@@ -86,6 +86,11 @@ struct QsIntermediate {
 	struct TerminalList* cache_tails;
 };
 
+struct Worker {
+	pthread_t thread;
+	QsEvaluator evaluator;
+};
+
 struct QsAEF {
 	unsigned n_independent;
 	QsTerminal* independent;
@@ -93,9 +98,9 @@ struct QsAEF {
 	pthread_mutex_t operation_lock;
 	pthread_cond_t operation_change;
 
+	pthread_spinlock_t workers_lock;
 	unsigned n_workers;
-	pthread_t* workers;
-	QsEvaluatorOptions options;
+	struct Worker* workers;
 
 	bool termination_notice;
 
@@ -116,6 +121,26 @@ static void expression_independ( QsTerminal t );
 static void aef_push_independent( QsAEF a,QsTerminal o );
 static QsTerminal aef_pop_independent( QsAEF a );
 
+bool qs_aef_spawn( QsAEF a,QsEvaluatorOptions opts ) {
+	bool result = true;
+
+	pthread_spin_lock( &a->workers_lock );
+
+	a->workers = realloc( a->workers,( a->n_workers + 1 )*sizeof (struct Worker) );
+	struct Worker* new = a->workers + a->n_workers;
+	new->evaluator = qs_evaluator_new( (QsCompoundDiscoverer)qs_operand_discoverer,opts );
+
+	if( pthread_create( &a->workers[ a->n_workers ].thread,NULL,worker,a ) ) {
+		qs_evaluator_destroy( new->evaluator );
+		result = false;
+	} else
+		a->n_workers++;
+
+	pthread_spin_unlock( &a->workers_lock );
+
+	return result;
+}
+
 QsAEF qs_aef_new( unsigned n_workers,QsEvaluatorOptions opts ) {
 	QsAEF result = malloc( sizeof (struct QsAEF) );
 
@@ -123,21 +148,13 @@ QsAEF qs_aef_new( unsigned n_workers,QsEvaluatorOptions opts ) {
 	result->independent = malloc( 0 );
 	pthread_mutex_init( &result->operation_lock,NULL );
 	pthread_cond_init( &result->operation_change,NULL );
-	result->n_workers = n_workers;
-	result->workers = malloc( n_workers*sizeof (pthread_t) );
-	result->termination_notice = false;
+	pthread_spin_init( &result->workers_lock,PTHREAD_PROCESS_PRIVATE );
+	result->n_workers = 0;
+	result->workers = malloc( 0 );
 	result->wait_item = NULL;
-	result->options = opts;
+	result->termination_notice = false;
 	pthread_mutex_init( &result->wait_lock,NULL );
 	pthread_cond_init( &result->wait_change,NULL );
-
-	int j;
-	for( j = 0; j<n_workers; j++ )
-		if( pthread_create( result->workers + j,NULL,worker,result ) ) {
-			qs_aef_destroy( result );
-			result->n_workers = j+1;
-			return NULL;
-		}
 
 	return result;
 }
@@ -150,14 +167,11 @@ void qs_aef_destroy( QsAEF a ) {
 
 	int j;
 	for( j = 0; j<a->n_workers; j++ )
-		pthread_join( a->workers[ j ],NULL );
+		pthread_join( a->workers[ j ].thread,NULL );
 
 	assert( !a->n_independent );
 	free( a->independent );
 	free( a->workers );
-
-	if( a->options )
-		qs_evaluator_options_destroy( a->options );
 
 	free( a );
 }
@@ -224,9 +238,19 @@ QsTerminal qs_operand_new_from_coefficient( QsCoefficient c ) {
 
 static void* worker( void* udata ) {
 	QsAEF self = (QsAEF)udata;
-	DBG_PRINT( "Thread %lu started\n",0,pthread_self( ) );
+	pthread_t self_thread = pthread_self( );
+	DBG_PRINT( "Thread %lu started\n",0,self_thread );
 
-	QsEvaluator ev = qs_evaluator_new( (QsCompoundDiscoverer)qs_operand_discoverer,self->options );
+	pthread_spin_lock( &self->workers_lock );
+
+	int j;
+	for( j = 0; j<self->n_workers; j++ )
+		if( self->workers[ j ].thread==self_thread )
+			break;
+
+	QsEvaluator ev = self->workers[ j ].evaluator;
+
+	pthread_spin_unlock( &self->workers_lock );
 
 	pthread_mutex_lock( &self->operation_lock );
 
@@ -241,18 +265,18 @@ static void* worker( void* udata ) {
 				target = aef_pop_independent( self );
 
 		} else
-			DBG_PRINT( "Thread %lu continued\n",1,pthread_self( ) );
+			DBG_PRINT( "Thread %lu continued\n",1,self_thread );
 
 		pthread_mutex_unlock( &self->operation_lock );
 
 		if( target ) {
-			DBG_PRINT( "Thread %lu evaluating QsTerminal %p\n",1,pthread_self( ),target );
+			DBG_PRINT( "Thread %lu evaluating QsTerminal %p\n",1,self_thread,target );
 			assert( !target->is_coefficient );
 
 			BakedExpression src = target->value.expression;
 			QsCoefficient result = qs_evaluator_evaluate( ev,src,src->expression.operation );
 
-			DBG_PRINT( "Thread %lu finished evaluation\n",1,pthread_self( ) );
+			DBG_PRINT( "Thread %lu finished evaluation\n",1,self_thread );
 
 			pthread_spin_lock( &target->lock );
 
