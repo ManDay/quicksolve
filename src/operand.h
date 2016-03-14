@@ -34,7 +34,7 @@ QsTerminal qs_operand_new_from_coefficient( QsCoefficient );
  * @param AEF for evaluation
  * @param Further operands
  */
-QsTerminal qs_operand_bake( QsOperand,QsAEF,QsOperation, ... );
+QsTerminal qs_operand_bake( unsigned,QsOperand*,QsAEF,QsOperation );
 
 /** Link coefficient
  *
@@ -46,7 +46,7 @@ QsTerminal qs_operand_bake( QsOperand,QsAEF,QsOperation, ... );
  * @param AEF for evaluation
  * @param Further operands
  */
-QsIntermediate qs_operand_link( QsOperand,QsOperation, ... );
+QsIntermediate qs_operand_link( unsigned,QsOperand*,QsOperation );
 
 /** Wait for the evaluation of a QsTerminal
  *

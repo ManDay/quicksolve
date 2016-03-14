@@ -24,7 +24,7 @@ struct QsReflist loader( QsIntegralMgr m,QsComponent i,unsigned* order ) {
 
 	unsigned n = qs_expression_n_terms( e );
 
-	struct QsReflist result = { n,malloc( n*sizeof (QsCoefficient) ) };
+	struct QsReflist result = { n,malloc( n*sizeof (struct QsReference) ) };
 
 	int j;
 	for( j = 0; j<n; j++ ) {
@@ -102,6 +102,8 @@ int main( const int argc,char* const argv[ ] ) {
 	while( ( chars = getline( &buffer,&N,infile ) )!=-1 ) {
 		QsIntegral i = qs_integral_new_from_string( buffer );
 		QsComponent id = qs_integral_mgr_manage( mgr,i );
+
+		qs_pivot_graph_solve( p,id );
 	}
 
 	free( buffer );

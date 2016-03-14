@@ -141,7 +141,7 @@ bool qs_aef_spawn( QsAEF a,QsEvaluatorOptions opts ) {
 	return result;
 }
 
-QsAEF qs_aef_new( unsigned n_workers,QsEvaluatorOptions opts ) {
+QsAEF qs_aef_new( ) {
 	QsAEF result = malloc( sizeof (struct QsAEF) );
 
 	result->n_independent = 0;
@@ -211,14 +211,18 @@ static QsCompound qs_operand_discoverer( Expression e,unsigned j,bool* is_expres
 
 		assert( operand->is_coefficient );
 
-		*is_expression = false;
+		if( is_expression )
+			*is_expression = false;
 
 		return operand->value.coefficient;
 	} else {
 		QsIntermediate operand = (QsIntermediate)e->operands[ j ];
 
-		*is_expression = true;
-		*op = operand->expression.operation;
+		if( is_expression )
+			*is_expression = true;
+
+		if( op )
+			*op = operand->expression.operation;
 		
 		return (QsCompound)( &operand->expression );
 	}
@@ -359,24 +363,7 @@ static void terminal_add_dependency( QsTerminal dependee,QsTerminal depender ) {
 	pthread_spin_unlock( &dependee->lock );
 }
 
-/* For each operand:
- *
- * If the operand is a coefficient, do nothing.
- *
- * If the operand is a BakedExpression and this is a baked
- * expression, register as a dependency in the operand.
- *
- * If the operand is a BakedExpression but this is not, add the
- * former to the tails cache.
- *
- * If the operand is an Expression and this is a baked expression,
- * register as a dependency in all of the operands tails cache and
- * free the Expression's tail cache
- *
- * If the operand is an Expression and this is not baked, merge the
- * tails cache and free the Expression's tail cache.
- */
-QsTerminal qs_operand_bake( QsOperand o,QsAEF queue,QsOperation op, ... ) {
+QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsAEF queue,QsOperation op ) {
 	QsTerminal result = malloc( sizeof (struct QsTerminal) );
 	DBG_PRINT( "Baking operation %i into QsTerminal %p with operands\n",0,op,result );
 	DBG_PRINT( "Increasing dependency counter initially on QsTerminal %p\n",1,result );
@@ -404,23 +391,19 @@ QsTerminal qs_operand_bake( QsOperand o,QsAEF queue,QsOperation op, ... ) {
 	b->n_baked_deps = 0;
 	b->baked_deps = malloc( 0 );
 
-	va_list va;
-	va_start( va,op );
-
 	e->operation = op;
-	e->n_operands = 0;
-	e->operands = malloc( 0 );
-	QsOperand next_raw = o;
+	e->n_operands = n_operands;
+	e->operands = malloc( n_operands*sizeof (QsOperand) );
 
-	do {
-		e->operands = realloc( e->operands,( e->n_operands + 1 )*sizeof (struct QsOperand) );
+	int k;
+	for( k = 0; k<n_operands; k++ ) {
+		QsOperand next_raw = os[ k ];
 		
 		if( next_raw->is_terminal ) {
 			QsTerminal next = (QsTerminal)next_raw;
 			DBG_PRINT( "QsTerminal %p\n",1,next );
 
 			terminal_add_dependency( next,result );
-			qs_operand_ref( next_raw );
 		} else {
 			QsIntermediate next = (QsIntermediate)next_raw;
 			// Assert this intermediate is not already consumed (redundancy)
@@ -439,19 +422,15 @@ QsTerminal qs_operand_bake( QsOperand o,QsAEF queue,QsOperation op, ... ) {
 			next->cache_tails = NULL;
 		}
 
-		e->operands[ e->n_operands ]= next_raw;
-		e->n_operands++;
-
-	} while( ( next_raw = va_arg( va,QsOperand ) ) );
-
-	va_end( va );
+		e->operands[ e->n_operands ]= qs_operand_ref( next_raw );
+	}
 
 	expression_independ( result );
 
 	return result;
 }
 
-QsIntermediate qs_operand_link( QsOperand o,QsOperation op, ... ) {
+QsIntermediate qs_operand_link( unsigned n_operands,QsOperand* os,QsOperation op ) {
 	QsIntermediate result = malloc( sizeof (struct QsIntermediate) );
 	DBG_PRINT( "Linking operation %i into QsIntermediate %p with operands\n",0,op,result );
 
@@ -460,23 +439,19 @@ QsIntermediate qs_operand_link( QsOperand o,QsOperation op, ... ) {
 	Expression e = &result->expression;
 	result->cache_tails = terminal_list_new( );
 
-	va_list va;
-	va_start( va,op );
-
 	e->operation = op;
-	e->n_operands = 0;
-	e->operands = malloc( 0 );
-	QsOperand next_raw = o;
+	e->n_operands = n_operands;
+	e->operands = malloc( n_operands*sizeof (QsOperand) );
 
-	do {
-		e->operands = realloc( e->operands,( e->n_operands + 1 )*sizeof (struct QsOperand) );
+	int k;
+	for( k = 0; k<n_operands; k++ ) {
+		QsOperand next_raw = os[ k ];
 		
 		if( next_raw->is_terminal ) {
 			QsTerminal next = (QsTerminal)next_raw;
 			DBG_PRINT( "QsTerminal %p, adding to own tails cache\n",1,next );
 
 			terminal_list_append( result->cache_tails,&next,1 );
-			qs_operand_ref( next_raw );
 		} else {
 			QsIntermediate next = (QsIntermediate)next_raw;
 			DBG_PRINT( "QsIntermediate %p, merging its tails cache into own tails cache and freeing the former\n",1,next );
@@ -487,12 +462,8 @@ QsIntermediate qs_operand_link( QsOperand o,QsOperation op, ... ) {
 			next->cache_tails = NULL;
 		}
 
-		e->operands[ e->n_operands ]= next_raw;
-		e->n_operands++;
-
-	} while( ( next_raw = va_arg( va,QsOperand ) ) );
-
-	va_end( va );
+		e->operands[ e->n_operands ]= qs_operand_ref( next_raw );
+	}
 
 	return result;
 }

@@ -6,9 +6,6 @@
 #include "../src/operand.h"
 
 #define POOL_INIT {0,malloc(0)}
-#define CC(cc) if( combine_count==cc ) { result =
-#define CCC(cc) } else CC(cc)
-#define ECC( ) }
 
 struct OperandPool {
 	unsigned n_operands;
@@ -98,6 +95,8 @@ int main( int argv,char* argc[ ] ) {
 	while( name<targets_max ) {
 		int combine_count = rand( )%4 + 1;
 		QsOperand combination[ 4 ];
+		bool is_intermediate[ 4 ];
+
 		const QsOperation ops[ ]= { QS_OPERATION_ADD,QS_OPERATION_MUL,QS_OPERATION_SUB,QS_OPERATION_DIV };
 		unsigned n_ops = sizeof (ops)/sizeof ops[ 0 ];
 
@@ -127,32 +126,26 @@ int main( int argv,char* argc[ ] ) {
 
 			printf( "c%i",target.name );
 			combination[ j ]= target.value;
+			is_intermediate[ j ]= !use_terminal;
 		}
 
 		bool bake = rand( )%( p_terminal + p_intermediate )<p_terminal;
 		if( bake ) {
 			printf( " (baked)\n" );
-			QsTerminal result;
-
-			CC(1) qs_operand_bake( combination[ 0 ],aef,op,NULL );
-			CCC(2) qs_operand_bake( combination[ 0 ],aef,op,combination[ 1 ],NULL );
-			CCC(3) qs_operand_bake( combination[ 0 ],aef,op,combination[ 1 ],combination[ 2 ],NULL );
-			CCC(4) qs_operand_bake( combination[ 0 ],aef,op,combination[ 1 ],combination[ 2 ],combination[ 3 ],NULL );
-			ECC()
+			QsTerminal result = qs_operand_bake( combine_count,combination,aef,op );
 
 			push( &terminals,(struct Operand){ name,(QsOperand)result } );
 		} else {
 			printf( "\n" );
-			QsIntermediate result;
-
-			CC(1) qs_operand_link( combination[ 0 ],op,NULL );
-			CCC(2) qs_operand_link( combination[ 0 ],op,combination[ 1 ],NULL );
-			CCC(3) qs_operand_link( combination[ 0 ],op,combination[ 1 ],combination[ 2 ],NULL );
-			CCC(4) qs_operand_link( combination[ 0 ],op,combination[ 1 ],combination[ 2 ],combination[ 3 ],NULL );
-			ECC()
+			QsIntermediate result = qs_operand_link( combine_count,combination,op );
 
 			push( &intermediates,(struct Operand){ name,(QsOperand)result } );
 		}
+		
+		for( j = 0; j<combine_count; j++ )
+			if( is_intermediate[ j ] )
+				qs_operand_unref( combination[ j ] );
+
 		name++;
 	}
 
@@ -160,7 +153,7 @@ int main( int argv,char* argc[ ] ) {
 	while( intermediates.n_operands ) {
 		struct Operand target = pop_rand( &intermediates );
 		printf( "c%i = c%i\n",name,target.name );
-		push( &terminals,(struct Operand){ name++,(QsOperand)( qs_operand_bake( target.value,aef,QS_OPERATION_ADD,NULL ) ) } );
+		push( &terminals,(struct Operand){ name++,(QsOperand)qs_operand_bake( 1,(QsOperand[ ]){ target.value },aef,QS_OPERATION_ADD ) } );
 	}
 
 	printf( "Waiting for terminals...\n" );

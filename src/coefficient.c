@@ -196,6 +196,8 @@ static void submit_compound( QsEvaluator e,QsCompound x,QsOperation op ) {
 	QsOperation child_op;
 	unsigned j;
 	for( j = 0; ( child_raw = e->discover( x,j,&is_compound,&child_op ) ); j++ ) {
+		bool parens;
+
 		if( j!=0 ) {
 			if( op==QS_OPERATION_ADD )
 				fermat_submit( e,"+" );
@@ -205,9 +207,19 @@ static void submit_compound( QsEvaluator e,QsCompound x,QsOperation op ) {
 				fermat_submit( e,"*" );
 			else if( op==QS_OPERATION_DIV )
 				fermat_submit( e,"/" );
+
+			parens = op==QS_OPERATION_MUL || op==QS_OPERATION_DIV || op==QS_OPERATION_SUB;
+		} else if( e->discover( x,j + 1,NULL,NULL ) ) {
+			if( op==QS_OPERATION_SUB )
+				fermat_submit( e,"-" );
+			else if( op==QS_OPERATION_DIV )
+				fermat_submit( e,"1/" );
+
+			parens = true;
 		}
 
-		if( op==QS_OPERATION_MUL || op==QS_OPERATION_DIV )
+
+		if( parens )
 			fermat_submit( e,"(" );
 
 		if( is_compound ) {
@@ -217,9 +229,13 @@ static void submit_compound( QsEvaluator e,QsCompound x,QsOperation op ) {
 			fermat_submit( e,child );
 		}
 
-		if( op==QS_OPERATION_MUL || op==QS_OPERATION_DIV )
+		if( parens )
 			fermat_submit( e,")" );
 	}
+}
+
+QsCoefficient qs_coefficient_one( ) {
+	return strdup( "1" );
 }
 
 QsCoefficient qs_evaluator_evaluate( QsEvaluator e,QsCompound x,QsOperation op ) {
@@ -253,6 +269,10 @@ unsigned qs_coefficient_print( const QsCoefficient c,char** b ) {
 
 bool qs_coefficient_is_one( const QsCoefficient c ) {
 	return !strcmp( c,"1" );
+}
+
+bool qs_coefficient_is_zero( const QsCoefficient c ) {
+	return !strcmp( c,"0" );
 }
 
 void qs_coefficient_destroy( QsCoefficient c ) {
