@@ -103,7 +103,8 @@ int main( const int argc,char* const argv[ ] ) {
 		QsIntegral i = qs_integral_new_from_string( buffer );
 		QsComponent id = qs_integral_mgr_manage( mgr,i );
 
-		qs_pivot_graph_solve( p,id,0 );
+		qs_pivot_graph_solve( p,id );
+		printf( "Finished.\n" );
 	}
 
 	free( buffer );

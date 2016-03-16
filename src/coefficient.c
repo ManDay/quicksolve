@@ -104,9 +104,8 @@ static ssize_t fermat_sync( QsEvaluator e,char** out ) {
 	return len;
 }
 
-static unsigned fermat_submit( QsEvaluator e,const char* data ) {
+static void fermat_submit( QsEvaluator e,const char* data ) {
 	fputs( data,e->out );
-	return strlen( data );
 }
 
 static void fermat_clear( QsEvaluator e ) {
@@ -114,17 +113,6 @@ static void fermat_clear( QsEvaluator e ) {
 	struct pollfd pf = { e->in_fd,POLLIN };
 	while( poll( &pf,1,0 )!=(-1) && pf.revents&POLLIN )
 		read( e->in_fd,wastebin,256 );
-}
-
-void qs_evaluator_register( QsEvaluator e,char* const symbols[ ],unsigned n_symbols ) {
-	int j;
-	for( j = 0; j<n_symbols; j++ ) {
-		fermat_submit( e,"&(J=" );
-		fermat_submit( e,symbols[ j ] );
-		fermat_submit( e,")\n" );
-	}
-
-	fermat_sync( e,NULL );
 }
 
 static void register_symbols( QsEvaluator e,unsigned n_symbols,struct Symbol symbols[ ] ) {
@@ -196,7 +184,7 @@ static void submit_compound( QsEvaluator e,QsCompound x,QsOperation op ) {
 	QsOperation child_op;
 	unsigned j;
 	for( j = 0; ( child_raw = e->discover( x,j,&is_compound,&child_op ) ); j++ ) {
-		bool parens = false;
+		bool parens = op==QS_OPERATION_MUL || op==QS_OPERATION_DIV ||( j!=0 && op==QS_OPERATION_SUB );
 
 		if( j!=0 ) {
 			if( op==QS_OPERATION_ADD )
@@ -208,8 +196,7 @@ static void submit_compound( QsEvaluator e,QsCompound x,QsOperation op ) {
 			else if( op==QS_OPERATION_DIV )
 				fermat_submit( e,"/" );
 
-			parens = op==QS_OPERATION_MUL || op==QS_OPERATION_DIV || op==QS_OPERATION_SUB;
-		} else if( e->discover( x,j + 1,NULL,NULL ) ) {
+		} else if( !( e->discover( x,j + 1,NULL,NULL ) ) ) {
 			if( op==QS_OPERATION_SUB )
 				fermat_submit( e,"-" );
 			else if( op==QS_OPERATION_DIV )
@@ -233,8 +220,8 @@ static void submit_compound( QsEvaluator e,QsCompound x,QsOperation op ) {
 	}
 }
 
-QsCoefficient qs_coefficient_one( ) {
-	return strdup( "1" );
+QsCoefficient qs_coefficient_one( bool minus ) {
+	return minus?strdup( "-1" ):strdup( "1" );
 }
 
 QsCoefficient qs_evaluator_evaluate( QsEvaluator e,QsCompound x,QsOperation op ) {

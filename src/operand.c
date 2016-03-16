@@ -9,6 +9,9 @@
 
 #include <assert.h>
 
+#define DBG_LEVEL 0
+#define DBG_PRINT( ... )
+
 #if DBG_LEVEL>0
 # include <stdio.h>
 #endif
@@ -202,7 +205,7 @@ QsCoefficient qs_terminal_wait( QsTerminal target ) {
 }
 
 static QsCompound qs_operand_discoverer( Expression e,unsigned j,bool* is_expression,QsOperation* op ) {
-	if( !( e->n_operands>j ) )
+	if( !( j<e->n_operands ) )
 		return NULL;
 
 	// Polymorphic behaviour
@@ -456,6 +459,8 @@ QsIntermediate qs_operand_link( unsigned n_operands,QsOperand* os,QsOperation op
 			QsIntermediate next = (QsIntermediate)next_raw;
 			DBG_PRINT( "QsIntermediate %p, merging its tails cache into own tails cache and freeing the former\n",1,next );
 
+			// Do not allow redundancies/reuse of QsIntermediates
+			assert( next->cache_tails );
 			terminal_list_append( result->cache_tails,next->cache_tails->operands,next->cache_tails->n_operands );
 
 			terminal_list_destroy( next->cache_tails );
@@ -466,6 +471,16 @@ QsIntermediate qs_operand_link( unsigned n_operands,QsOperand* os,QsOperation op
 	}
 
 	return result;
+}
+
+QsTerminal qs_operand_terminate( QsOperand o,QsAEF a ) {
+	if( o->is_terminal )
+		return (QsTerminal)o;
+	else {
+		QsTerminal result = qs_operand_bake( 1,&o,a,QS_OPERATION_ADD );
+		qs_operand_unref( o );
+		return result;
+	}
 }
 
 QsOperand qs_operand_ref( QsOperand o ) {
@@ -496,7 +511,8 @@ void qs_operand_unref( QsOperand o ) {
 			// We don't need to lock, since no one else is referencing the
 			// QsTerminal
 
-			// Destroying dangling QsIntermediates is likely an error
+			// Destroying dangling, unevaluated BakedExpression is likely a
+			// programmer error
 			assert( target->is_coefficient );
 
 			if( target->is_coefficient )

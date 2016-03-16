@@ -36,6 +36,16 @@ QsTerminal qs_operand_new_from_coefficient( QsCoefficient );
  */
 QsTerminal qs_operand_bake( unsigned,QsOperand*,QsAEF,QsOperation );
 
+/** Bake operand if not terminal
+ *
+ * Converts an operand to a QsTerminal. That means if it is already a
+ * terminal, it is returned as-is, otherwise it is baked as-is. In any
+ * case, it consumes the reference on the passed operand.
+ *
+ * @param[transfer=full] Operand
+ */
+QsTerminal qs_operand_terminate( QsOperand,QsAEF );
+
 /** Link coefficient
  *
  * Links a new QsIntermediate from the given operands. Every operand of

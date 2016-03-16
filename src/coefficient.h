@@ -56,7 +56,7 @@ QsCoefficient qs_coefficient_new_from_binary( const char*,unsigned );
 unsigned qs_coefficient_print( const QsCoefficient,char** );
 bool qs_coefficient_is_one( const QsCoefficient );
 bool qs_coefficient_is_zero( const QsCoefficient );
-QsCoefficient qs_coefficient_one( );
+QsCoefficient qs_coefficient_one( bool );
 void qs_coefficient_destroy( QsCoefficient );
 
 #endif
