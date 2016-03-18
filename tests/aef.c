@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include "../src/coefficient.h"
 #include "../src/operand.h"
@@ -58,11 +59,13 @@ int main( int argv,char* argc[ ] ) {
 		"5/x/ep^3"
 	};
 
-	unsigned p_terminal = 100;
-	unsigned p_intermediate = 50;
+	srand( 100 );
 
-	unsigned n_workers = 4;
-	unsigned targets_max = 260;
+	unsigned p_terminal = 100;
+	unsigned p_intermediate = 80;
+
+	unsigned n_workers = 1;
+	unsigned targets_max = 400;
 
 	unsigned n_symb_strings = sizeof (symb_strings)/sizeof symb_strings[ 0 ];
 	const unsigned n_coeffs = sizeof (coeff_strings)/sizeof coeff_strings[ 0 ];
@@ -70,7 +73,7 @@ int main( int argv,char* argc[ ] ) {
 	struct OperandPool intermediates = POOL_INIT;
 	struct OperandPool terminals = POOL_INIT;
 
-	printf( "Creating AEF with %i workers...\n",n_workers );
+	printf( "Creating AEF for %i workers...\n",n_workers );
 
 	int j;
 	QsEvaluatorOptions opts = qs_evaluator_options_new( );
@@ -78,10 +81,6 @@ int main( int argv,char* argc[ ] ) {
 		qs_evaluator_options_add( opts,symb_strings[ j ],NULL );
 
 	QsAEF aef = qs_aef_new( );
-	for( j = 0; j<n_workers; j++ )
-		qs_aef_spawn( aef,opts );
-
-	qs_evaluator_options_destroy( opts );
 
 	printf( "Creating original QsCoefficients...\n" );
 	unsigned name = 0;
@@ -156,6 +155,12 @@ int main( int argv,char* argc[ ] ) {
 		push( &terminals,(struct Operand){ name++,(QsOperand)qs_operand_bake( 1,(QsOperand[ ]){ target.value },aef,QS_OPERATION_ADD ) } );
 		qs_operand_unref( target.value );
 	}
+
+	printf( "Spawning workers...\n" );
+	for( j = 0; j<n_workers; j++ )
+		qs_aef_spawn( aef,opts );
+
+	qs_evaluator_options_destroy( opts );
 
 	printf( "Waiting for terminals...\n" );
 	while( terminals.n_operands ) {

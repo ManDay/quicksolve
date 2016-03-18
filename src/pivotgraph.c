@@ -258,7 +258,7 @@ static void czakon_simplify( QsPivotGraph g,QsComponent i ) {
 	for( j = 0; j<target->n_refs; j++  ) {
 		QsComponent head = target->refs[ j ].head;
 
-		if( g->components[ head ] && g->components[ head ]->assigned )
+		if( g->components[ head ] && head!=i && g->components[ head ]->assigned )
 			break;
 	}
 
@@ -282,7 +282,7 @@ static void czakon_simplify( QsPivotGraph g,QsComponent i ) {
 	}
 }
 
-void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i ) {
+static void czakon_solve_identity( QsPivotGraph g,QsComponent i ) {
 	if( !qs_pivot_graph_load( g,i ) || g->components[ i ]->assigned )
 		return;
 
@@ -303,16 +303,57 @@ void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i ) {
 	if( smallest_reference ) {
 		QsComponent head = smallest_reference->head;
 
-		qs_pivot_graph_solve( g,head );
+		czakon_solve_identity( g,head );
 
 		czakon_simplify( g,i );
 
-		qs_pivot_graph_solve( g,i );
+		czakon_solve_identity( g,i );
 	} else {
 		qs_pivot_graph_normalize( g,i,true );
 		g->components[ i ]->assigned = true;
 	}
 }
+
+void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i ) {
+	if( !qs_pivot_graph_load( g,i ) )
+		return;
+
+	czakon_solve_identity( g,i );
+	Pivot* target = g->components[ i ];
+
+	int j = 0;
+	while( j<target->n_refs ) {
+		QsComponent head = target->refs[ j ].head;
+
+		if( head!=i && qs_pivot_graph_load( g,head ) ) {
+			czakon_solve_identity( g,head );
+			czakon_simplify( g,i );
+			j = 0;
+		} else
+			j++;
+	}
+}
+
+struct QsReflist qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
+	Pivot* target = g->components[ i ];
+
+	struct QsReflist result = { 0,NULL };
+
+	if( target ) {
+		result.n_references = target->n_refs - 1;
+		result.references = malloc( result.n_references*sizeof (struct QsReference) );
+
+		int j,j_prime = 0;
+		for( j = 0; j_prime<result.n_references && j<target->n_refs; j++ )
+			if( target->refs[ j ].head!=i ) {
+				result.references[ j_prime ].head = target->refs[ j ].head;
+				result.references[ j_prime ].coefficient = qs_terminal_wait( qs_operand_terminate( target->refs[ j ].coefficient,g->aef ) );
+				j_prime++;
+			}
+	}
+
+	return result;
+}	
 
 static void free_pivot( Pivot* p ) {
 	int j;

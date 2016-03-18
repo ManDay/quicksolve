@@ -8,6 +8,7 @@
 #include <poll.h>
 #include <sys/time.h>
 #include <stdarg.h>
+#include <assert.h>
 
 #include "coefficient.h"
 
@@ -78,10 +79,7 @@ static ssize_t fermat_sync( QsEvaluator e,char** out ) {
 	char* result = NULL;
 	ssize_t len = getdelim( &result,&read,';',e->in );
 
-	if( strstr( result,"Error" )|| strstr( result,"error" )|| strstr( result,"ERROR" )|| strstr( result,"***" ) ) {
-		kill( getpid( ),SIGTRAP );
-		DBG_PRINT( "Fermat error '%s'",0,result );
-	}
+	assert( !( strstr( result,"Error" )|| strstr( result,"error" )|| strstr( result,"ERROR" )|| strstr( result,"***" ) ) );
 
 	if( out ) {
 		//Remove all occurrences of "\n"," ", and ";"

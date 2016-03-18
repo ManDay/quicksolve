@@ -77,11 +77,6 @@ int main( const int argc,char* const argv[ ] ) {
 	for( j = optind + 1; j<argc; j++ ) {
 		char* symbol = strtok( argv[ j ],"=" );
 		char* value = strtok( NULL,"" );
-		
-		if( value )
-			printf( "Registering %s substituted by %s\n",symbol,value );
-		else
-			printf( "Registering %s\n",symbol );
 
 		qs_evaluator_options_add( fermat_options,symbol,value );
 	}
@@ -104,7 +99,28 @@ int main( const int argc,char* const argv[ ] ) {
 		QsComponent id = qs_integral_mgr_manage( mgr,i );
 
 		qs_pivot_graph_solve( p,id );
-		printf( "Finished.\n" );
+		struct QsReflist result = qs_pivot_graph_wait( p,id );
+
+		if( result.n_references ) {
+			char* head,* coeff;
+
+			qs_integral_print( qs_integral_mgr_peek( mgr,id ),&head );
+			printf( "fill %s =\n\n",head );
+			free( head );
+
+			int j;
+			for( j = 0; j<result.n_references; j++ ) {
+				qs_integral_print( qs_integral_mgr_peek( mgr,result.references[ j ].head ),&head );
+				qs_coefficient_print( result.references[ j ].coefficient,&coeff );
+				printf( " + %s * (%s)\n\n",head,coeff );
+				free( coeff );
+				free( head );
+			}
+
+			printf( ";\n" );
+
+			free( result.references );
+		}
 	}
 
 	free( buffer );

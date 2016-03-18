@@ -10,6 +10,11 @@ struct QsReference {
 	QsCoefficient coefficient;
 };
 
+/** QsComponent version of QsExpression
+ *
+ * Usually returned by value. To indicate failure, n_references is set
+ * to 0 and references is set to NULL
+ */
 struct QsReflist {
 	unsigned n_references;
 	struct QsReference* references;
@@ -21,6 +26,7 @@ typedef struct QsPivotGraph* QsPivotGraph;
 QsPivotGraph qs_pivot_graph_new( QsAEF,void*,QsLoadFunction );
 QsPivotGraph qs_pivot_graph_new_with_size( QsAEF,void*,QsLoadFunction,unsigned );
 void qs_pivot_graph_solve( QsPivotGraph,QsComponent );
+struct QsReflist qs_pivot_graph_wait( QsPivotGraph,QsComponent );
 void qs_pivot_graph_destroy( QsPivotGraph );
 
 #endif

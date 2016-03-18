@@ -63,6 +63,13 @@ QsExpression qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,unsi
 	return result;
 }
 
+QsIntegral qs_integral_mgr_peek( QsIntegralMgr m,QsComponent i ) {
+	if( !( i<m->n_integrals ) )
+		return NULL;
+
+	return m->integrals[ i ].integral;
+}
+
 QsIntegralMgr qs_integral_mgr_new( const char* prefix,const char* suffix ) {
 	return qs_integral_mgr_new_with_size( prefix,suffix,1 );
 }
