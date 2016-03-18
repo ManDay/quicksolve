@@ -246,6 +246,14 @@ QsCoefficient qs_coefficient_new_from_binary( const char* data,unsigned size ) {
 	return result;
 }
 
+unsigned qs_coefficient_to_binary( QsCoefficient c,char** out ) {
+	unsigned len = strlen( c );
+	
+	*out = malloc( len );
+	memcpy( *out,c,len );
+	return len;
+}
+
 unsigned qs_coefficient_print( const QsCoefficient c,char** b ) {
 	*b = strdup( c );
 	return strlen( c );

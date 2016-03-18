@@ -64,7 +64,7 @@ int main( int argv,char* argc[ ] ) {
 	unsigned p_terminal = 100;
 	unsigned p_intermediate = 80;
 
-	unsigned n_workers = 1;
+	unsigned n_workers = 4;
 	unsigned targets_max = 400;
 
 	unsigned n_symb_strings = sizeof (symb_strings)/sizeof symb_strings[ 0 ];

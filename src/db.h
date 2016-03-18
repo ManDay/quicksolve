@@ -25,6 +25,7 @@ QsDbCursor qs_db_cursor_reset( QsDbCursor );
 struct QsDbEntry* qs_db_cursor_next( QsDbCursor );
 void qs_db_entry_destroy( struct QsDbEntry* );
 struct QsDbEntry* qs_db_get( QsDb,const char*,unsigned );
+void qs_db_set( QsDb db,struct QsDbEntry* );
 void qs_db_cursor_destroy( QsDbCursor );
 void qs_db_destroy( QsDb );
 

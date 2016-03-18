@@ -115,7 +115,7 @@ int main( const int argc,char* const argv[ ] ) {
 	for( j = 0; j<masters_allocated; j++ )
 		masters[ j ]= calloc( height,sizeof (struct MasterSector) );
 
-	QsIntegralMgr m = qs_integral_mgr_new( "idPR",".dat#type=kch" );
+	QsIntegralMgr m = qs_integral_mgr_new( "idPR",".dat#type=kch","","" );
 
 	for( j = optind; j<argc; j++ ) {
 

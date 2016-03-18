@@ -44,6 +44,48 @@ QsExpression qs_expression_new_from_binary( const char* data,unsigned len,unsign
 	return result;
 }
 
+unsigned qs_expression_to_binary( QsExpression e,char** result ) {
+	unsigned size = 0;
+	unsigned allocated;
+	char* content;
+	
+	int j;
+	for( j = 0; j<e->n_terms; j++ ) {
+		char* int_bin,* coeff_bin;
+		unsigned int_len = qs_integral_to_binary( e->terms[ j ].integral,&int_bin );
+		unsigned coeff_len = qs_coefficient_to_binary( e->terms[ j ].coefficient,&coeff_bin );
+
+		unsigned new_size = size + int_len + coeff_len + 2*sizeof (int);
+
+		if( j==0 ) {
+			allocated = e->n_terms*( 2*sizeof (int) + int_len*2 + coeff_len*2 );
+			content = malloc( allocated );
+		} else {
+			if( allocated<new_size )
+				content = realloc( *result,new_size );
+		}
+
+		char* int_len_base = content + size;
+		char* int_bin_base = int_len_base + sizeof (int);
+		char* coeff_len_base = int_bin_base + int_len;
+		char* coeff_bin_base = coeff_len_base + sizeof (int);
+
+		*( (int*)int_len_base )= int_len;
+		memcpy( int_bin_base,int_bin,int_len );
+		*( (int*)coeff_len_base )= coeff_len;
+		memcpy( coeff_bin_base,coeff_bin,coeff_len );
+
+		free( int_bin );
+		free( coeff_bin );
+
+		size = new_size;
+	}
+
+	*result = realloc( *result,size );
+
+	return size;
+}
+
 QsExpression qs_expression_new_with_size( unsigned size ) {
 	QsExpression result = malloc( sizeof (struct QsExpression) );
 	result->n_terms = 0;
@@ -95,13 +137,6 @@ void qs_expression_destroy( QsExpression e ) {
 	qs_expression_disband( e );
 }
 
-/** Free expression structure
- *
- * Frees the expression structure without destroying the contained
- * integrals and expressions.
- *
- * @param This
- */
 void qs_expression_disband( QsExpression e ) {
 	free( e->terms );
 	free( e );

@@ -53,6 +53,15 @@ QsIntegral qs_integral_new_from_binary( const char* data,unsigned len ) {
 	return result;
 }
 
+unsigned qs_integral_to_binary( QsIntegral i,char** out ) {
+	int prot_len = asprintf( out,"PR%i",i->prototype );
+
+	*out = realloc( *out,prot_len+1+i->n_powers*sizeof (QsPower) );
+	memcpy( *out + prot_len + 1,i->powers,i->n_powers*sizeof (QsPower) );
+
+	return prot_len + 1 + i->n_powers*sizeof (QsPower);
+}
+
 /** Print string representation of integral
  *
  * Prints an integral as a string

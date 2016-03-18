@@ -40,6 +40,18 @@ struct QsReflist loader( QsIntegralMgr m,QsComponent i,unsigned* order ) {
 	return result;
 }
 
+void saver( QsIntegralMgr m,QsComponent i,struct QsReflist l,unsigned order ) {
+	QsExpression e = qs_expression_new_with_size( l.n_references );
+
+	int j;
+	for( j = 0; j<l.n_references; j++ )
+		qs_expression_add( e,l.references[ j ].coefficient,qs_integral_mgr_peek( m,l.references[ j ].head ) );
+
+	qs_integral_mgr_save_expression( m,i,e );
+
+	qs_expression_disband( e );
+}
+
 int main( const int argc,char* const argv[ ] ) {
 	// Parse arguments
 	char* outfilename = NULL;
@@ -82,7 +94,7 @@ int main( const int argc,char* const argv[ ] ) {
 	}
 
 
-	QsIntegralMgr mgr = qs_integral_mgr_new( "idPR",".dat#type=kch" );
+	QsIntegralMgr mgr = qs_integral_mgr_new( "idPR",".dat#type=kch","qsPR",".dat#type=kch" );
 	QsAEF aef = qs_aef_new( );
 	QsPivotGraph p = qs_pivot_graph_new( aef,mgr,(QsLoadFunction)loader );
 
