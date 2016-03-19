@@ -20,10 +20,10 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back ) {
 	target->solving = true;
 
 	Pivot* next_target = NULL;
-	QsComponent next_i;
+	QsComponent next_i = 0;
 
 	bool self_found = false;
-	unsigned j_self;
+	unsigned j_self = 0;
 	int j = 0;
 
 	while( j<target->n_refs && !next_target ) {
@@ -35,7 +35,9 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back ) {
 			const bool suitable =( full_back || candidate->order<order || candidate->solved )&& !candidate->solving;
 	
 			if( suitable ) {
-				QsCoefficient val = qs_terminal_wait( qs_operand_terminate( target->refs[ j ].coefficient,g->aef ) );
+				QsTerminal wait;
+				target->refs[ j ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef ) );
+				QsCoefficient val = qs_terminal_wait( wait );
 
 				if( qs_coefficient_is_zero( val ) ) {
 					qs_operand_unref( target->refs[ j ].coefficient );
@@ -88,7 +90,9 @@ void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i ) {
 
 	int j = 0;
 	while( j<target->n_refs ) {
-		QsCoefficient val = qs_terminal_wait( qs_operand_terminate( target->refs[ j ].coefficient,g->aef ) );
+		QsTerminal wait;
+		target->refs[ j ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef ) );
+		QsCoefficient val = qs_terminal_wait( wait );
 
 		if( qs_coefficient_is_zero( val ) ) {
 			qs_operand_unref( target->refs[ j ].coefficient );
