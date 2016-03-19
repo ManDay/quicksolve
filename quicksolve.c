@@ -96,7 +96,7 @@ int main( const int argc,char* const argv[ ] ) {
 
 	QsIntegralMgr mgr = qs_integral_mgr_new( "idPR",".dat#type=kch","qsPR",".dat#type=kch" );
 	QsAEF aef = qs_aef_new( );
-	QsPivotGraph p = qs_pivot_graph_new( aef,mgr,(QsLoadFunction)loader );
+	QsPivotGraph p = qs_pivot_graph_new_with_size( aef,mgr,(QsLoadFunction)loader,mgr,(QsSaveFunction)saver,10000 );
 
 	for( j = 0; j<num_processors; j++ )
 		qs_aef_spawn( aef,fermat_options );

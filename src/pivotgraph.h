@@ -21,10 +21,11 @@ struct QsReflist {
 };
 
 typedef struct QsReflist(* QsLoadFunction)( void*,QsComponent,unsigned* );
+typedef void(* QsSaveFunction)( void*,QsComponent,struct QsReflist,unsigned order );
+
 typedef struct QsPivotGraph* QsPivotGraph;
 
-QsPivotGraph qs_pivot_graph_new( QsAEF,void*,QsLoadFunction );
-QsPivotGraph qs_pivot_graph_new_with_size( QsAEF,void*,QsLoadFunction,unsigned );
+QsPivotGraph qs_pivot_graph_new_with_size( QsAEF,void*,QsLoadFunction,void*,QsSaveFunction,unsigned );
 void qs_pivot_graph_solve( QsPivotGraph,QsComponent );
 struct QsReflist qs_pivot_graph_wait( QsPivotGraph,QsComponent );
 void qs_pivot_graph_destroy( QsPivotGraph );

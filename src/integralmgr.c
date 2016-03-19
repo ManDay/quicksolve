@@ -15,6 +15,11 @@ struct Target {
 	bool master;
 };
 
+struct Databases {
+	QsDb read;
+	QsDb readwrite;
+};
+
 struct QsIntegralMgr {
 	unsigned n_integrals;
 	unsigned allocated;
@@ -26,52 +31,47 @@ struct QsIntegralMgr {
 	char* rw_prefix;
 	char* rw_suffix;
 
-	unsigned n_ro_dbs;
-	QsDb* ro_dbs;
-
-	unsigned n_rw_dbs;
-	QsDb* rw_dbs;
+	unsigned n_dbs;
+	struct Databases** dbs;
 };
 
-static QsDb open_db( QsIntegralMgr m,QsPrototype p,bool read ) {
-	QsDb** const dbs = read?&m->ro_dbs:&m->rw_dbs;
-	unsigned* const n_dbs = read?&m->n_ro_dbs:&m->n_rw_dbs;
-
-	if( !( p<*n_dbs ) ) {
-		*dbs = realloc( *dbs,( p + 1 )*sizeof (QsDb) );
+static struct Databases open_db( QsIntegralMgr m,QsPrototype p,bool create_rw ) {
+	if( !( p<m->n_dbs ) ) {
+		m->dbs = realloc( m->dbs,( p + 1 )*sizeof (struct Databases*) );
 		int j;
-		for( j = *n_dbs; !( j>p ); j++ )
-			( *dbs )[ j ]= NULL;
-
-		*n_dbs = p + 1;
+		for( j = m->n_dbs; j<p + 1; j++ )
+			m->dbs[ j ]= NULL;
+		m->n_dbs = p + 1;
 	}
 
-	if( ( *dbs )[ p ] )
-		return ( *dbs )[ p ];
+	if( !m->dbs[ p ] ) {
+		m->dbs[ p ]= malloc( sizeof (struct Databases) );
 
-	char* filename;
-	asprintf( &filename,"%s%i%s",read?m->ro_prefix:m->rw_prefix,p,read?m->ro_suffix:m->rw_suffix );
+		char* filename;
+		asprintf( &filename,"%s%i%s",m->ro_prefix,p,m->ro_suffix );
+		m->dbs[ p ]->read = qs_db_new( filename,QS_DB_READ );
+		free( filename );
 
-	( *dbs )[ p ]= qs_db_new( filename,read?QS_DB_READ:QS_DB_WRITE );
+		asprintf( &filename,"%s%i%s",m->rw_prefix,p,m->rw_suffix );
+		m->dbs[ p ]->readwrite = qs_db_new( filename,QS_DB_WRITE|( create_rw?QS_DB_CREATE:0 ) );
+		free( filename );
+	}
 
-	free( filename );
-
-	return( *dbs )[ p ];
+	return *( m->dbs[ p ] );
 }
 
 void qs_integral_mgr_save_expression( QsIntegralMgr m,QsComponent i,QsExpression e ) {
-	QsDb rw_source = open_db( m,qs_integral_prototype( qs_integral_mgr_peek( m,i ) ),false );
-	QsIntegral in = m->integrals[ i ].integral;
+	QsIntegral in = qs_integral_mgr_peek( m,i );
+
+	struct Databases dbs = open_db( m,qs_integral_prototype( in ),true );
 
 	struct QsDbEntry* entry = malloc( sizeof (struct QsDbEntry) );
-	
 	entry->keylen = qs_integral_n_powers( in )*sizeof (QsPower);
 	entry->key = malloc( entry->keylen );
 	entry->vallen = qs_expression_to_binary( e,&entry->val );
-
 	memcpy( entry->key,qs_integral_powers( in ),entry->keylen );
 
-	qs_db_set( rw_source,entry );
+	qs_db_set( dbs.readwrite,entry );
 
 	qs_db_entry_destroy( entry );
 }
@@ -83,6 +83,9 @@ QsExpression qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,unsi
 		return result;
 
 	QsIntegral in = m->integrals[ i ].integral;
+	QsPrototype p = qs_integral_prototype( in );
+
+	struct Databases dbs = open_db( m,p,false );
 
 	unsigned n_powers = qs_integral_n_powers( in );
 	const QsPower* pwrs = qs_integral_powers( in );
@@ -90,8 +93,7 @@ QsExpression qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,unsi
 	unsigned keylen = n_powers*sizeof (QsPower);
 	struct QsDbEntry* data;
 
-	QsDb rw_source = open_db( m,qs_integral_prototype( in ),false );
-	if( rw_source &&( data = qs_db_get( rw_source,(char*)pwrs,keylen ) ) ) {
+	if( dbs.readwrite &&( data = qs_db_get( dbs.readwrite,(char*)pwrs,keylen ) ) ) {
 		result = qs_expression_new_from_binary( data->val,data->vallen,order );
 		qs_db_entry_destroy( data );
 
@@ -100,12 +102,9 @@ QsExpression qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,unsi
 				qs_expression_add( result,qs_coefficient_new_from_binary( "-1",2 ),m->integrals[ i ].integral );
 	}
 
-	if( !result ) {
-		QsDb ro_source = open_db( m,qs_integral_prototype( in ),true );
-		if( ro_source &&( data = qs_db_get( ro_source,(char*)pwrs,keylen ) ) ) {
-			result = qs_expression_new_from_binary( data->val,data->vallen,order );
-			qs_db_entry_destroy( data );
-		}
+	if( !result && dbs.read &&( data = qs_db_get( dbs.read,(char*)pwrs,keylen ) ) ) {
+		result = qs_expression_new_from_binary( data->val,data->vallen,order );
+		qs_db_entry_destroy( data );
 	}
 
 	if( !result )
@@ -135,11 +134,8 @@ QsIntegralMgr qs_integral_mgr_new_with_size( const char* ro_prefix,const char* r
 	result->rw_prefix = strdup( rw_prefix );
 	result->rw_suffix = strdup( rw_suffix );
 
-	result->n_ro_dbs = 0;
-	result->ro_dbs = malloc( 0 );
-
-	result->n_rw_dbs = 0;
-	result->rw_dbs = malloc( 0 );
+	result->n_dbs = 0;
+	result->dbs = malloc( 0 );
 
 	return result;
 }
@@ -177,20 +173,23 @@ void qs_integral_mgr_destroy( QsIntegralMgr m ) {
 	for( j = 0; j<m->n_integrals; j++ )
 		qs_integral_destroy( m->integrals[ j ].integral );
 
-	for( j = 0; j<m->n_ro_dbs; j++ )
-		if( m->ro_dbs[ j ] )
-			qs_db_destroy( m->ro_dbs[ j ] );
+	for( j = 0; j<m->n_dbs; j++ ) {
+		struct Databases* dbs = m->dbs[ j ];
+		if( dbs ) {
+			if( dbs->read )
+				qs_db_destroy( dbs->read );
+			if( dbs->readwrite )
+				qs_db_destroy( dbs->readwrite );
 
-	for( j = 0; j<m->n_rw_dbs; j++ )
-		if( m->rw_dbs[ j ] )
-			qs_db_destroy( m->rw_dbs[ j ] );
+			free( dbs );
+		}
+	}
 
 	free( m->integrals );
 	free( m->ro_prefix );
 	free( m->ro_suffix );
 	free( m->rw_prefix );
 	free( m->rw_suffix );
-	free( m->ro_dbs );
-	free( m->rw_dbs );
+	free( m->dbs );
 	free( m );
 }

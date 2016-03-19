@@ -11,7 +11,7 @@
  * time (necessary because of a bug which crashes everything when more
  * than a certain number (512) kyotocabinet databases are open).
  */
-#define MAX_OPEN_DBS 512
+#define MAX_OPEN_DBS 256
 
 static unsigned n_tracked_dbs;
 static unsigned cache_open_count;
@@ -31,7 +31,7 @@ struct QsDbCursor {
 
 static bool open_db( QsDb db ) {
 	db->db = kcdbnew( );
-	if( kcdbopen( db->db,db->pathname,db->mode==QS_DB_READ?KCOREADER:KCOWRITER ) ) {
+	if( kcdbopen( db->db,db->pathname,( ( db->mode&QS_DB_READ )?KCOREADER:KCOWRITER )|( ( db->mode&QS_DB_CREATE )?KCOCREATE:0 ) ) ) {
 		cache_open_count++;
 		return true;
 	}
@@ -46,22 +46,6 @@ static void close_db( QsDb db ) {
 	kcdbdel( db->db );
 	db->db = NULL;
 	cache_open_count--;
-}
-
-static bool assert_open( QsDb db ) {
-	if( db->db )
-		return true;
-
-	while( cache_open_count>=MAX_OPEN_DBS ) {
-		int j;
-		for( j = 0; j<n_tracked_dbs; j++ )
-			if( tracked_dbs[ j ]->db ) {
-				close_db( tracked_dbs[ j ] );
-				break;
-			}
-	}
-
-	return open_db( db );
 }
 
 static void track_db( QsDb db ) {
@@ -89,6 +73,22 @@ static void untrack_db( QsDb db ) {
 		free( tracked_dbs );
 		tracked_dbs = NULL;
 	}
+}
+
+static bool assert_open( QsDb db ) {
+	if( db->db )
+		return true;
+
+	while( cache_open_count>=MAX_OPEN_DBS ) {
+		int j;
+		for( j = 0; j<n_tracked_dbs; j++ )
+			if( tracked_dbs[ j ]->db ) {
+				close_db( tracked_dbs[ j ] );
+				break;
+			}
+	}
+
+	return open_db( db );
 }
 
 void qs_db_destroy( QsDb db ) {

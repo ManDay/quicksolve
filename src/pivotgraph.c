@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <assert.h>
 
+#define COLLECT_PREALLOC 4
+
 struct Reference {
 	QsComponent head;
 	QsOperand coefficient;
@@ -15,10 +17,11 @@ struct Reference {
 typedef struct {
 	unsigned n_refs;
 	struct Reference* refs;
-	unsigned order;
 
-	// TODO: Remove, because process specific
-	bool assigned;
+	/* Process specific variables */
+	unsigned order; ///< Order of pivot
+	bool solved; ///< All pivots with smaller order eliminated and normalized
+	bool solving; ///< Pivot is being solved for in higher recursion, do not recurse
 } Pivot;
 
 struct QsPivotGraph {
@@ -27,23 +30,23 @@ struct QsPivotGraph {
 	Pivot** components;
 
 	QsLoadFunction loader;
+	QsSaveFunction saver;
 	void* load_data;
+	void* save_data;
 
 	QsAEF aef;
 };
 
 
-QsPivotGraph qs_pivot_graph_new( QsAEF aef,void* load_data,QsLoadFunction loader ) {
-	return qs_pivot_graph_new_with_size( aef,load_data,loader,0 );
-}
-
-QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunction loader,unsigned prealloc ) {
+QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunction loader,void* save_data,QsSaveFunction saver,unsigned prealloc ) {
 	QsPivotGraph result = malloc( sizeof (struct QsPivotGraph) );
 	result->n_components = 0;
 	result->allocated = prealloc;
 	result->components = malloc( prealloc*sizeof (Pivot*) );
 	result->loader = loader;
 	result->load_data = load_data;
+	result->saver = saver;
+	result->save_data = save_data;
 	result->aef = aef;
 
 	return result;
@@ -77,9 +80,12 @@ bool qs_pivot_graph_load( QsPivotGraph g,QsComponent i ) {
 
 	Pivot* result = g->components[ i ]= malloc( sizeof (Pivot) );
 	result->n_refs = l.n_references;
-	result->order = order;
-	result->assigned = false;
 	result->refs = malloc( l.n_references*sizeof (struct Reference) );
+
+	result->solved = false;
+	result->solving = false;
+
+	result->order = order;
 
 	int j;
 	for( j = 0; j<result->n_refs; j++ ) {
@@ -163,10 +169,10 @@ bool qs_pivot_graph_relay( QsPivotGraph g,QsComponent tail,QsComponent head,bool
 QsTerminal qs_pivot_graph_collect( QsPivotGraph g,QsComponent tail,QsComponent head,bool bake ) {
 	Pivot* tail_pivot = g->components[ tail ];
 
-	unsigned allocated = 2;
+	unsigned allocated = COLLECT_PREALLOC;
 	unsigned n_operands = 0;
 	QsOperand* operands = malloc( allocated*sizeof (QsOperand) );
-	QsOperand* first;
+	QsOperand* first = NULL;
 	QsTerminal result = NULL;
 
 	int j = 0;
@@ -198,7 +204,7 @@ QsTerminal qs_pivot_graph_collect( QsPivotGraph g,QsComponent tail,QsComponent h
 			qs_operand_unref( operands[ j ] );
 
 		tail_pivot->refs = realloc( tail_pivot->refs,tail_pivot->n_refs*sizeof (struct Reference) );
-	} else if( bake && n_operands )
+	} else if( bake && first )
 		*first = (QsOperand)( result = qs_operand_terminate( *first,g->aef ) );
 
 	free( operands );
@@ -221,6 +227,18 @@ QsTerminal qs_pivot_graph_collect( QsPivotGraph g,QsComponent tail,QsComponent h
  */
 void qs_pivot_graph_normalize( QsPivotGraph g,QsComponent target,bool bake ) {
 	Pivot* target_pivot = g->components[ target ];
+
+	/* If there is only one coefficient, its value is actually irrelevant
+	 * and will be unref'ed without further use. Because QsOperand's unref
+	 * fails an assertion if it detects that a value is discarded, we do
+	 * not unref the value here but simply leave it unchanged (it will not
+	 * be used in further evaluations anyway because relaying kills the
+	 * associated term). */
+	if( target_pivot->n_refs==1 ) {
+		if( bake )
+			target_pivot->refs[ 0 ].coefficient = (QsOperand)qs_operand_terminate( target_pivot->refs[ 0 ].coefficient,g->aef );
+		return;
+	}
 
 	int j;
 	for( j = 0; j<target_pivot->n_refs; j++ )
@@ -249,89 +267,6 @@ void qs_pivot_graph_normalize( QsPivotGraph g,QsComponent target,bool bake ) {
 			qs_operand_unref( self );
 			return;
 		}
-}
-
-static void czakon_simplify( QsPivotGraph g,QsComponent i ) {
-	Pivot* target = g->components[ i ];
-
-	int j;
-	for( j = 0; j<target->n_refs; j++  ) {
-		QsComponent head = target->refs[ j ].head;
-
-		if( g->components[ head ] && head!=i && g->components[ head ]->assigned )
-			break;
-	}
-
-	if( j<target->n_refs ) {
-		QsComponent head = target->refs[ j ].head;
-		qs_pivot_graph_relay( g,i,head,false );
-
-		int k = 0;
-		while( k<target->n_refs ) {
-			QsTerminal result = qs_pivot_graph_collect( g,i,target->refs[ k ].head,true );
-			QsCoefficient result_coeff = qs_terminal_wait( result );
-
-			if( qs_coefficient_is_zero( result_coeff ) ) {
-				qs_operand_unref( target->refs[ k ].coefficient );
-				target->refs[ k ]= target->refs[ --( target->n_refs ) ];
-			} else
-				k++;
-		}
-
-		czakon_simplify( g,i );
-	}
-}
-
-static void czakon_solve_identity( QsPivotGraph g,QsComponent i ) {
-	if( !qs_pivot_graph_load( g,i ) || g->components[ i ]->assigned )
-		return;
-
-	Pivot* target = g->components[ i ];
-
-	struct Reference* smallest_reference = NULL;
-	unsigned order = g->components[ i ]->order;
-
-	int j;
-	for( j = 0; j<target->n_refs; j++ )
-		if( qs_pivot_graph_load( g,target->refs[ j ].head ) ) {
-			Pivot* head_candidate = g->components[ target->refs[ j ].head ];
-
-			if( head_candidate->order<order &&( !smallest_reference || head_candidate->order<g->components[ smallest_reference->head ]->order ) )
-				smallest_reference = target->refs + j;
-		}
-
-	if( smallest_reference ) {
-		QsComponent head = smallest_reference->head;
-
-		czakon_solve_identity( g,head );
-
-		czakon_simplify( g,i );
-
-		czakon_solve_identity( g,i );
-	} else {
-		qs_pivot_graph_normalize( g,i,true );
-		g->components[ i ]->assigned = true;
-	}
-}
-
-void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i ) {
-	if( !qs_pivot_graph_load( g,i ) )
-		return;
-
-	czakon_solve_identity( g,i );
-	Pivot* target = g->components[ i ];
-
-	int j = 0;
-	while( j<target->n_refs ) {
-		QsComponent head = target->refs[ j ].head;
-
-		if( head!=i && qs_pivot_graph_load( g,head ) ) {
-			czakon_solve_identity( g,head );
-			czakon_simplify( g,i );
-			j = 0;
-		} else
-			j++;
-	}
 }
 
 struct QsReflist qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
@@ -374,3 +309,4 @@ void qs_pivot_graph_destroy( QsPivotGraph g ) {
 	free( g );
 }
 
+#include "policies/czakonprime.c"

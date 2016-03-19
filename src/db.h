@@ -15,8 +15,9 @@ struct QsDbEntry {
 };
 
 enum QsDbMode {
-	QS_DB_READ,
-	QS_DB_WRITE
+	QS_DB_READ = 1<<0,
+	QS_DB_WRITE = 1<<1,
+	QS_DB_CREATE = 1<<2
 };
 
 QsDb qs_db_new( char*,enum QsDbMode );
