@@ -72,7 +72,9 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back ) {
 		if( !target->solved ) {
 			assert( self_found );
 
-			target->refs[ j_self ].coefficient = (QsOperand)qs_operand_terminate( target->refs[ j_self ].coefficient,g->aef );
+			QsTerminal wait;
+			target->refs[ j_self ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j_self ].coefficient,g->aef ) );
+			assert( !qs_coefficient_is_zero( qs_terminal_wait( wait ) ) );
 
 			qs_pivot_graph_normalize( g,i,true );
 			target->solved = true;

@@ -121,8 +121,8 @@ bool qs_pivot_graph_relay( QsPivotGraph g,QsComponent tail,QsComponent head,bool
 		if( tail_pivot->refs[ j ].head==head ) {
 			QsOperand base = tail_pivot->refs[ j ].coefficient;
 
-			tail_pivot->refs[ j ]= tail_pivot->refs[ tail_pivot->n_refs-1 ];
-			tail_pivot->refs = realloc( tail_pivot->refs,( tail_pivot->n_refs+head_pivot->n_refs - 2 )*sizeof (struct Reference) );
+			tail_pivot->refs[ j ]= tail_pivot->refs[ tail_pivot->n_refs - 1 ];
+			tail_pivot->refs = realloc( tail_pivot->refs,( tail_pivot->n_refs + head_pivot->n_refs - 2 )*sizeof (struct Reference) );
 
 			int k;
 			int j_prime = 0;
@@ -284,6 +284,7 @@ struct QsReflist qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
 				QsTerminal wait;
 				result.references[ j_prime ].head = target->refs[ j ].head;
 				target->refs[ j ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef ) );
+
 				result.references[ j_prime ].coefficient = qs_terminal_wait( wait );
 				j_prime++;
 			}

@@ -69,4 +69,6 @@ QsIntermediate qs_operand_link( unsigned,QsOperand*,QsOperation );
  */
 QsCoefficient qs_terminal_wait( QsTerminal );
 
+unsigned qs_operand_refcount( QsOperand o );
+
 #endif

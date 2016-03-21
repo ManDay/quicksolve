@@ -23,6 +23,11 @@ struct Expression {
 	QsOperand* operands;
 };
 
+struct Waiter {
+	pthread_mutex_t lock;
+	pthread_cond_t change;
+};
+
 struct BakedExpression {
 	struct Expression expression;
 
@@ -36,11 +41,17 @@ struct BakedExpression {
 
 	/** Evaluator
 	 *
-	 * Designates the queue into which the operation is fed when ready.
-	 * NULL indicates, for baking expressions, that it has already been
-	 * added to a queue.
+	 * This field designates the evaluating AEF to whose queue the
+	 * QsTerminal is added.
 	 */
 	QsAEF queue;
+
+	/** Waiter
+	 *
+	 * Indicates whether the operand is waited for and yes, by which
+	 * waiter struct.
+	 */
+	struct Waiter* waiter;
 
 	unsigned n_baked_deps;
 	/** List of BakedExpressions
@@ -67,6 +78,7 @@ struct QsOperand {
 struct QsTerminal {
 	struct QsOperand operand;
 
+	/** Lock type change between BakedExpression and QsCoefficient */
 	pthread_spinlock_t lock;
 
 	bool is_coefficient;
@@ -103,11 +115,6 @@ struct QsAEF {
 	struct Worker* workers;
 
 	bool termination_notice;
-
-	QsTerminal wait_item;
-
-	pthread_mutex_t wait_lock;
-	pthread_cond_t wait_change;
 };
 
 static QsCompound qs_operand_discoverer( Expression e,unsigned j,bool* is_expression,QsOperation* op );
@@ -116,7 +123,6 @@ static void terminal_list_append( struct TerminalList* target,QsTerminal* additi
 static void terminal_list_destroy( struct TerminalList* target );
 static void terminal_add_dependency( QsTerminal dependee,QsTerminal depender );
 static void expression_clean( Expression e );
-static void baked_expression_destroy( BakedExpression b );
 static void expression_independ( QsTerminal t );
 static void aef_push_independent( QsAEF a,QsTerminal o );
 static QsTerminal aef_pop_independent( QsAEF a );
@@ -151,10 +157,7 @@ QsAEF qs_aef_new( ) {
 	pthread_spin_init( &result->workers_lock,PTHREAD_PROCESS_PRIVATE );
 	result->n_workers = 0;
 	result->workers = malloc( 0 );
-	result->wait_item = NULL;
 	result->termination_notice = false;
-	pthread_mutex_init( &result->wait_lock,NULL );
-	pthread_cond_init( &result->wait_change,NULL );
 
 	return result;
 }
@@ -177,27 +180,33 @@ void qs_aef_destroy( QsAEF a ) {
 }
 
 QsCoefficient qs_terminal_wait( QsTerminal target ) {
-	QsAEF a = NULL;
+	struct Waiter waiter ={ PTHREAD_MUTEX_INITIALIZER,PTHREAD_COND_INITIALIZER };
 
 	pthread_spin_lock( &target->lock );
 
 	if( !target->is_coefficient ) {
-		a = target->value.expression->queue;
-		a->wait_item = target;
-	}
+		target->value.expression->waiter = &waiter;
 
+		pthread_mutex_lock( &waiter.lock );
+		pthread_spin_unlock( &target->lock );
+
+		bool is_unevaluated = false;
+		do {
+			pthread_cond_wait( &waiter.change,&waiter.lock );
+
+			pthread_spin_lock( &target->lock );
+			is_unevaluated = !target->is_coefficient;
+			pthread_spin_unlock( &target->lock );
+		} while( is_unevaluated );
+
+		pthread_mutex_unlock( &waiter.lock );
+	} else
+		pthread_spin_unlock( &target->lock );
+
+	pthread_spin_lock( &target->lock );
+	assert( target->is_coefficient );
 	pthread_spin_unlock( &target->lock );
 
-	if( a ) {
-		pthread_mutex_lock( &a->wait_lock );
-
-		while( a->wait_item )
-			pthread_cond_wait( &a->wait_change,&a->wait_lock );
-
-		pthread_mutex_unlock( &a->wait_lock );
-	}
-
-	assert( target->is_coefficient );
 	return target->value.coefficient;
 }
 
@@ -209,7 +218,9 @@ static QsCompound qs_operand_discoverer( Expression e,unsigned j,bool* is_expres
 	if( e->operands[ j ]->is_terminal ) {
 		QsTerminal operand = (QsTerminal)e->operands[ j ];
 
+		pthread_spin_lock( &operand->lock );
 		assert( operand->is_coefficient );
+		pthread_spin_unlock( &operand->lock );
 
 		if( is_expression )
 			*is_expression = false;
@@ -282,7 +293,11 @@ static void* worker( void* udata ) {
 
 			target->is_coefficient = true;
 			target->value.coefficient = result;
+			struct Waiter* waiter = src->waiter;
 
+			/* As soon as we unlock, me must consider the memory of target
+			 * purged, because other threads may already have taken care and
+			 * dispensed of it. */
 			pthread_spin_unlock( &target->lock );
 
 			int j;
@@ -293,14 +308,15 @@ static void* worker( void* udata ) {
 				expression_independ( depender );
 			}
 
-			pthread_mutex_lock( &self->wait_lock );
-			if( self->wait_item==target ) {
-				pthread_cond_signal( &self->wait_change );
-				self->wait_item = NULL;
+			if( waiter ) {
+				pthread_mutex_lock( &waiter->lock );
+				pthread_cond_signal( &waiter->change );
+				pthread_mutex_unlock( &waiter->lock );
 			}
-			pthread_mutex_unlock( &self->wait_lock );
 
-			baked_expression_destroy( src );
+			expression_clean( &src->expression );
+			free( src->baked_deps );
+			free( src );
 		}
 
 		pthread_mutex_lock( &self->operation_lock );
@@ -311,6 +327,10 @@ static void* worker( void* udata ) {
 	qs_evaluator_destroy( ev );
 
 	return NULL;
+}
+
+unsigned qs_operand_refcount( QsOperand o ) {
+	return atomic_load_explicit( &o->refcount,memory_order_relaxed );
 }
 
 struct TerminalList* terminal_list_new( ) {
@@ -334,7 +354,7 @@ static void terminal_list_destroy( struct TerminalList* target ) {
 }
 
 static void terminal_add_dependency( QsTerminal dependee,QsTerminal depender ) {
-	assert( !depender->is_coefficient );
+	//assert( !depender->is_coefficient );
 	pthread_spin_lock( &dependee->lock );
 	if( !dependee->is_coefficient ) {
 		BakedExpression target = dependee->value.expression;
@@ -348,7 +368,8 @@ static void terminal_add_dependency( QsTerminal dependee,QsTerminal depender ) {
 		 * make sure the decreases of the dependee_count by the worker
 		 * threads which may already be working on the dependee as of now,
 		 * are ordered after the associated increment. */
-		atomic_fetch_add_explicit( &depender->value.expression->dependee_count,1,memory_order_release );
+		unsigned previous = atomic_fetch_add_explicit( &depender->value.expression->dependee_count,1,memory_order_release );
+		assert( previous>0 );
 	}
 	pthread_spin_unlock( &dependee->lock );
 }
@@ -358,10 +379,9 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsAEF queue,QsOper
 
 	atomic_init( &result->operand.refcount,1 );
 	atomic_thread_fence( memory_order_acq_rel );
+	pthread_spin_init( &result->lock,PTHREAD_PROCESS_PRIVATE );
 
 	result->operand.is_terminal = true;
-
-	pthread_spin_init( &result->lock,PTHREAD_PROCESS_PRIVATE );
 	result->is_coefficient = false;
 
 	BakedExpression b = result->value.expression = malloc( sizeof (struct BakedExpression) );
@@ -375,11 +395,16 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsAEF queue,QsOper
 	 * being evaluated before everything was constructed.
 	 */
 	atomic_init( &b->dependee_count,1 );
+
+	/* Protects both, the dependee count and the previously constructed
+	 * QsIntermediates which become operands of this QsTerminal, from
+	 * premature access by assuring their construction is finished. */
 	atomic_thread_fence( memory_order_acq_rel );
 
 	b->queue = queue;
 	b->n_baked_deps = 0;
 	b->baked_deps = malloc( 0 );
+	b->waiter = NULL;
 
 	e->operation = op;
 	e->n_operands = n_operands;
@@ -479,12 +504,6 @@ static void expression_clean( Expression e ) {
 	free( e->operands );
 }
 
-static void baked_expression_destroy( BakedExpression b ) {
-	expression_clean( &b->expression );
-	free( b->baked_deps );
-	free( b );
-}
-
 void qs_operand_unref( QsOperand o ) {
 	if( atomic_fetch_sub_explicit( &o->refcount,1,memory_order_acquire )==1 ) {
 		if( o->is_terminal ) {
@@ -493,14 +512,19 @@ void qs_operand_unref( QsOperand o ) {
 			// We don't need to lock, since no one else is referencing the
 			// QsTerminal
 
-			// Destroying dangling, unevaluated BakedExpression is likely a
-			// programmer error
+			/* Destroying dangling, unevaluated BakedExpression is likely a
+			 * programmer error and would require more work since it would
+			 * have to be unregistered as a depender from its dependees (which
+			 * otherwise would attempt to access it without holding a
+			 * reference.
+			 * TODO: It may happen, though, for example when a pivot has no
+			 * references and is thus zero. In that case relaying it will
+			 * simply discard whatever coefficient to it. Therefore, it should
+			 * be implemented. Currently not needed, because before a pivot is
+			 * relayed, it is always normalized and then waited upon. */
 			assert( target->is_coefficient );
 
-			if( target->is_coefficient )
-				qs_coefficient_destroy( target->value.coefficient );
-			else
-				baked_expression_destroy(  target->value.expression );
+			qs_coefficient_destroy( target->value.coefficient );
 
 			pthread_spin_destroy( &target->lock );
 		} else {
@@ -514,22 +538,26 @@ void qs_operand_unref( QsOperand o ) {
 }
 
 static void expression_independ( QsTerminal t ) {
-	assert( !t->is_coefficient );
+	//assert( !t->is_coefficient );
 	BakedExpression e = t->value.expression;
 
 	unsigned previous = atomic_fetch_sub_explicit( &e->dependee_count,1,memory_order_acq_rel );
 
+	assert( previous>0 );
+
 	if( previous==1 )
 		aef_push_independent( e->queue,t );
 }
-	
+
 static void aef_push_independent( QsAEF a,QsTerminal o ) {
 	// TODO: A more efficient storage, e.g. DLL
 	pthread_mutex_lock( &a->operation_lock );
+
 	a->independent = realloc( a->independent,( a->n_independent + 1 )*sizeof (QsTerminal) );
 	a->independent[ a->n_independent ]= o;
 	a->n_independent++;
 	pthread_cond_signal( &a->operation_change );
+
 	pthread_mutex_unlock( &a->operation_lock );
 }
 
@@ -538,6 +566,7 @@ static QsTerminal aef_pop_independent( QsAEF a ) {
 
 	if( a->n_independent ) {
 		result = a->independent[ 0 ];
+
 		size_t new_size = ( a->n_independent - 1 )*sizeof (QsTerminal);
 		QsTerminal* new_stack = malloc( new_size );
 		memcpy( new_stack,a->independent + 1,new_size );
