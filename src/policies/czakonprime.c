@@ -10,6 +10,19 @@
  * of cancellation between coefficients and abide to the ordering.
  *
  * Afterwards, all remaining greater pivots are eliminated.
+ *
+ * @return Fpr full reduction, returns true, if the resulting pivot for
+ * I is normalized and all not "solving" pivots have been eliminated.
+ * For partial reduction, returns true, if I is normalized.
+ *
+ * Possible failures and actions
+ *
+ * A pivot could not be eliminated because it could not be normalized:
+ * - Attempt to eliminate other pivot, possibly cancelling problematic
+ *   pivot in the process.
+ * - Attempt to eliminate other pivot, then apply back-substitutions in
+ *   problematic pivot.
+ * - Attempt further eliminations on problematic pivot.
  */
 static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned rc ) {
 	if( !qs_pivot_graph_load( g,i ) )
@@ -32,7 +45,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 		if( qs_pivot_graph_load( g,target->refs[ j ].head ) ) {
 			Pivot* candidate = g->components[ target->refs[ j ].head ];
 
-			const bool suitable =( full_back || candidate->order<order || candidate->solved )&& !candidate->solving;
+			const bool suitable = candidate->order!=order &&( full_back ||( ( candidate->order<order || candidate->solved )&& !candidate->solving ) );
 	
 			if( suitable ) {
 				QsTerminal wait;
@@ -66,7 +79,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 		DBG_PRINT( "}\n",rc );
 
 		for( j = 0; j<target->n_refs; j++ )
-			qs_pivot_graph_collect( g,i,target->refs[ j ].head,target->refs[ j ].head!=i && qs_pivot_graph_load( g,target->refs[ j ].head )&& g->components[ target->refs[ j ].head ]->order<order );
+			qs_pivot_graph_collect( g,i,target->refs[ j ].head,false );
 
 		czakon_prime( g,i,full_back,rc );
 	} else {
@@ -74,15 +87,25 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 		 * but if we haven't made any changes, solved is still true */
 		target->solving = false;
 		if( !target->solved ) {
-			DBG_PRINT( "Normalizing %i for subsitution\n",rc,order );
-			assert( self_found );
 
-			QsTerminal wait;
-			target->refs[ j_self ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j_self ].coefficient,g->aef ) );
-			assert( !qs_coefficient_is_zero( qs_terminal_wait( wait ) ) );
+			if( self_found ) {
+				QsTerminal wait;
+				target->refs[ j_self ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j_self ].coefficient,g->aef ) );
 
-			qs_pivot_graph_normalize( g,i,true );
-			target->solved = true;
+				if( !qs_coefficient_is_zero( qs_terminal_wait( wait ) ) ) {
+					qs_pivot_graph_normalize( g,i,true );
+
+					target->solved = true;
+
+					DBG_PRINT( "Normalized %i for substitution\n",rc,order );
+					return;
+				}
+			}
+
+			DBG_PRINT( "Normalization of %i failed, forcing full solution {\n",rc,order );
+			fprintf( stderr,"Warning: Canonical elimination in %i not normalizable (Recursion depth %i)\n",order,rc );
+			czakon_prime( g,i,true,rc + 1 );
+			DBG_PRINT( "}\n",rc );
 		}
 	}
 }

@@ -37,6 +37,19 @@ struct QsReflist loader( QsIntegralMgr m,QsComponent i,unsigned* order ) {
 
 	qs_expression_disband( e );
 
+	/* Handle weird things we don't know what to do with. */
+	if( !n ) {
+		char* str;
+		qs_integral_print( qs_integral_mgr_peek( m,i ),&str );
+		fprintf( stderr,"Warning: Database empty expression for %s\n",str );
+		free( str );
+
+		result.references = realloc( result.references,sizeof (struct QsReference) );
+		result.references[ 0 ].coefficient = qs_coefficient_one( false );
+		result.references[ 0 ].head = i;
+		result.n_references = 1;
+	}
+
 	return result;
 }
 
@@ -111,27 +124,32 @@ int main( const int argc,char* const argv[ ] ) {
 		QsComponent id = qs_integral_mgr_manage( mgr,i );
 
 		qs_pivot_graph_solve( p,id );
-		struct QsReflist result = qs_pivot_graph_wait( p,id );
+		struct QsReflist* result = qs_pivot_graph_wait( p,id );
 
-		if( result.n_references ) {
+		if( result ) {
 			char* head,* coeff;
 
 			qs_integral_print( qs_integral_mgr_peek( mgr,id ),&head );
-			printf( "fill %s =\n\n",head );
+			printf( "fill %s =",head );
 			free( head );
 
-			int j;
-			for( j = 0; j<result.n_references; j++ ) {
-				qs_integral_print( qs_integral_mgr_peek( mgr,result.references[ j ].head ),&head );
-				qs_coefficient_print( result.references[ j ].coefficient,&coeff );
-				printf( " + %s * (%s)\n\n",head,coeff );
-				free( coeff );
-				free( head );
-			}
+			if( result->n_references>1 ) {
+				int j;
+				for( j = 0; j<result->n_references; j++ )
+					if( result->references[ j ].head!=id ) {
+						qs_integral_print( qs_integral_mgr_peek( mgr,result->references[ j ].head ),&head );
+						qs_coefficient_print( result->references[ j ].coefficient,&coeff );
+						printf( "\n + %s * (%s)",head,coeff );
+						free( coeff );
+						free( head );
+					}
+			} else
+				printf( "\n0" );
 
-			printf( ";\n" );
+			printf( "\n;\n" );
 
-			free( result.references );
+			free( result->references );
+			free( result );
 		}
 	}
 

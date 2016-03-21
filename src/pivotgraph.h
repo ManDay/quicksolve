@@ -27,7 +27,7 @@ typedef struct QsPivotGraph* QsPivotGraph;
 
 QsPivotGraph qs_pivot_graph_new_with_size( QsAEF,void*,QsLoadFunction,void*,QsSaveFunction,unsigned );
 void qs_pivot_graph_solve( QsPivotGraph,QsComponent );
-struct QsReflist qs_pivot_graph_wait( QsPivotGraph,QsComponent );
+struct QsReflist* qs_pivot_graph_wait( QsPivotGraph,QsComponent );
 void qs_pivot_graph_destroy( QsPivotGraph );
 
 #endif

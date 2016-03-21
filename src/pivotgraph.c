@@ -102,7 +102,8 @@ bool qs_pivot_graph_load( QsPivotGraph g,QsComponent i ) {
  *
  * Relays one edge tail-to-head under the assumption that the head is a
  * normalized pivot. The resulting coefficients on the new terms are not
- * baked.
+ * baked. The base coefficient is used in multiple multiplications, it
+ * must and will be baked!
  *
  * @param This
  *
@@ -119,7 +120,7 @@ bool qs_pivot_graph_relay( QsPivotGraph g,QsComponent tail,QsComponent head,bool
 	int j;
 	for( j = 0; j<tail_pivot->n_refs; j++ )
 		if( tail_pivot->refs[ j ].head==head ) {
-			QsOperand base = tail_pivot->refs[ j ].coefficient;
+			QsOperand base = (QsOperand)qs_operand_terminate( tail_pivot->refs[ j ].coefficient,g->aef );
 
 			tail_pivot->refs[ j ]= tail_pivot->refs[ tail_pivot->n_refs - 1 ];
 			tail_pivot->refs = realloc( tail_pivot->refs,( tail_pivot->n_refs + head_pivot->n_refs - 2 )*sizeof (struct Reference) );
@@ -153,7 +154,8 @@ bool qs_pivot_graph_relay( QsPivotGraph g,QsComponent tail,QsComponent head,bool
 /** Collects all edges into one
  *
  * Given two components tail and head, will collect all the edges from
- * tail to head into the first of these edges in the reflist.
+ * tail to head into the first of these edges in the reflist. No
+ * component is reused, no constrains on baking.
  *
  * @param This
  *
@@ -217,7 +219,8 @@ QsTerminal qs_pivot_graph_collect( QsPivotGraph g,QsComponent tail,QsComponent h
  * Assuming that all self-edges have already been collected into a
  * single coefficient, normalizes the whole expression by dividing
  * by minus the first self-coefficient it finds so that the resulting
- * expression corresponds to the form -X + ... = 0
+ * expression corresponds to the form -X + ... = 0. The self-coefficient
+ * is referenced multiple times, it must and will be baked!
  *
  * @param This
  *
@@ -243,7 +246,7 @@ void qs_pivot_graph_normalize( QsPivotGraph g,QsComponent target,bool bake ) {
 	int j;
 	for( j = 0; j<target_pivot->n_refs; j++ )
 		if( target_pivot->refs[ j ].head==target ) {
-			QsOperand self = target_pivot->refs[ j ].coefficient;
+			QsOperand self = (QsOperand)qs_operand_terminate( target_pivot->refs[ j ].coefficient,g->aef );
 
 			int k;
 			for( k = 0; k<target_pivot->n_refs; k++ )
@@ -269,25 +272,24 @@ void qs_pivot_graph_normalize( QsPivotGraph g,QsComponent target,bool bake ) {
 		}
 }
 
-struct QsReflist qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
+struct QsReflist* qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
 	Pivot* target = g->components[ i ];
 
-	struct QsReflist result = { 0,NULL };
+	struct QsReflist* result = NULL;
 
 	if( target ) {
-		result.n_references = target->n_refs - 1;
-		result.references = malloc( result.n_references*sizeof (struct QsReference) );
+		result = malloc( sizeof (struct QsReflist) );
+		result->n_references = target->n_refs;
+		result->references = malloc( result->n_references*sizeof (struct QsReference) );
 
-		int j,j_prime = 0;
-		for( j = 0; j_prime<result.n_references && j<target->n_refs; j++ )
-			if( target->refs[ j ].head!=i ) {
-				QsTerminal wait;
-				result.references[ j_prime ].head = target->refs[ j ].head;
-				target->refs[ j ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef ) );
+		int j;
+		for( j = 0; j<target->n_refs; j++ ) {
+			QsTerminal wait;
+			target->refs[ j ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef ) );
 
-				result.references[ j_prime ].coefficient = qs_terminal_wait( wait );
-				j_prime++;
-			}
+			result->references[ j ].head = target->refs[ j ].head;
+			result->references[ j ].coefficient = qs_terminal_wait( wait );
+		}
 	}
 
 	return result;
