@@ -6,6 +6,7 @@ set( QS_INTEGRAL_POWERTYPE_VALID "char" "int" "long" )
 set( QS_DEBUG_LEVEL_VALID "0" "1" "2" "3" )
 set( QS_BUILD_SSRENDERER "ON" CACHE BOOL "Build the subsampling renderer" )
 set( QS_BUILD_QUICKSOLVE "ON" CACHE BOOL "Build Quicksolve" )
+set( QS_JEMALLOC "ON" CACHE BOOL "Link QuickLib against jemalloc allocator" )
 set( QS_BUILD_TESTS "ON" CACHE BOOL "Build unit tests" )
 
 if( NOT "${QS_INTEGRAL_POWERTYPE}" IN_LIST QS_INTEGRAL_POWERTYPE_VALID )
@@ -39,6 +40,10 @@ find_library( KYOTO_LIB "kyotocabinet" DOC "Path to libkyotocabinet" )
 
 add_library( db "src/db.c" )
 add_library( quicklib "src/pivotgraph.c" "src/integralmgr.c" "src/integral.c" "src/coefficient.c" "src/operand.c" "src/expression.c" "src/print.c" )
+
+if( "${QS_JEMALLOC}" )
+	target_link_libraries( quicklib jemalloc )
+endif( )
 
 target_link_libraries( db "${KYOTO_LIB}" )
 

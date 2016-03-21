@@ -11,7 +11,7 @@
  *
  * Afterwards, all remaining greater pivots are eliminated.
  */
-static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back ) {
+static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned rc ) {
 	if( !qs_pivot_graph_load( g,i ) )
 		return;
 
@@ -60,16 +60,21 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back ) {
 	if( next_target ) {
 		target->solved = false;
 
-		czakon_prime( g,next_i,false );
+		DBG_PRINT( "Eliminating %i from %i {\n",rc,next_target->order,order );
+		czakon_prime( g,next_i,false,rc + 1 );
 		qs_pivot_graph_relay( g,i,next_i,false );
+		DBG_PRINT( "}\n",rc );
 
 		for( j = 0; j<target->n_refs; j++ )
 			qs_pivot_graph_collect( g,i,target->refs[ j ].head,target->refs[ j ].head!=i && qs_pivot_graph_load( g,target->refs[ j ].head )&& g->components[ target->refs[ j ].head ]->order<order );
 
-		czakon_prime( g,i,full_back );
+		czakon_prime( g,i,full_back,rc );
 	} else {
+		/* If we ended up here because of back-substitution, solving is true
+		 * but if we haven't made any changes, solved is still true */
 		target->solving = false;
 		if( !target->solved ) {
+			DBG_PRINT( "Normalizing %i for subsitution\n",rc,order );
 			assert( self_found );
 
 			QsTerminal wait;
@@ -86,7 +91,9 @@ void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i ) {
 	if( !qs_pivot_graph_load( g,i ) )
 		return;
 
-	czakon_prime( g,i,true );
+	DBG_PRINT( "Solving for Pivot %i {\n",0,g->components[ i ]->order );
+	czakon_prime( g,i,true,1 );
+	DBG_PRINT( "}\n",0 );
 
 	Pivot* const target = g->components[ i ];
 
