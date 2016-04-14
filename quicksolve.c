@@ -14,8 +14,8 @@
 
 const char const usage[ ]= "The Source is the doc.";
 
-struct QsReflist loader( QsIntegralMgr m,QsComponent i,unsigned* order ) {
-	QsExpression e = qs_integral_mgr_load_expression( m,i,order );
+struct QsReflist loader( QsIntegralMgr m,QsComponent i,struct QsMetadata* meta ) {
+	QsExpression e = qs_integral_mgr_load_expression( m,i,meta );
 	
 	if( !e ) {
 		struct QsReflist result = { 0,NULL };
@@ -53,14 +53,14 @@ struct QsReflist loader( QsIntegralMgr m,QsComponent i,unsigned* order ) {
 	return result;
 }
 
-void saver( QsIntegralMgr m,QsComponent i,struct QsReflist l,unsigned order ) {
+void saver( QsIntegralMgr m,QsComponent i,struct QsReflist l,struct QsMetadata meta ) {
 	QsExpression e = qs_expression_new_with_size( l.n_references );
 
 	int j;
 	for( j = 0; j<l.n_references; j++ )
 		qs_expression_add( e,l.references[ j ].coefficient,qs_integral_mgr_peek( m,l.references[ j ].head ) );
 
-	qs_integral_mgr_save_expression( m,i,e );
+	qs_integral_mgr_save_expression( m,i,e,meta );
 
 	qs_expression_disband( e );
 }

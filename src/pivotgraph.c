@@ -18,10 +18,7 @@ typedef struct {
 	unsigned n_refs;
 	struct Reference* refs;
 
-	/* Process specific variables */
-	unsigned order; ///< Order of pivot
-	bool solved; ///< All pivots with smaller order eliminated and normalized
-	bool solving; ///< Pivot is being solved for in higher recursion, do not recurse
+	struct QsMetadata meta;
 } Pivot;
 
 struct QsPivotGraph {
@@ -72,8 +69,8 @@ bool qs_pivot_graph_load( QsPivotGraph g,QsComponent i ) {
 	if( g->components[ i ] )
 		return true;
 
-	unsigned order;
-	struct QsReflist l = g->loader( g->load_data,i,&order );
+	struct QsMetadata meta;
+	struct QsReflist l = g->loader( g->load_data,i,&meta );
 
 	if( !l.n_references )
 		return false;
@@ -81,11 +78,7 @@ bool qs_pivot_graph_load( QsPivotGraph g,QsComponent i ) {
 	Pivot* result = g->components[ i ]= malloc( sizeof (Pivot) );
 	result->n_refs = l.n_references;
 	result->refs = malloc( l.n_references*sizeof (struct Reference) );
-
-	result->solved = false;
-	result->solving = false;
-
-	result->order = order;
+	result->meta = meta;
 
 	int j;
 	for( j = 0; j<result->n_refs; j++ ) {

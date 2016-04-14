@@ -137,8 +137,8 @@ int main( const int argc,char* const argv[ ] ) {
 			struct QsDbEntry* row;
 			while( ( row = qs_db_cursor_next( cur ) ) ) {
 				if( memcmp( row->key,"generated",row->keylen )&& memcmp( row->key,"setup",row->keylen ) ) {
-					unsigned order;
-					QsExpression e = qs_expression_new_from_binary( row->val,row->vallen,&order );
+					QsExpression e = qs_expression_new_from_binary( row->val,row->vallen - sizeof (int) );
+					unsigned order = *( (int*)( row->val +( row->vallen - sizeof (int) ) ) );
 
 					if( order<stat_min || stat_max==0 )
 						stat_min = order;

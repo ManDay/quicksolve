@@ -3,7 +3,7 @@
 
 typedef struct QsExpression* QsExpression;
 
-QsExpression qs_expression_new_from_binary( const char*,unsigned len,unsigned* );
+QsExpression qs_expression_new_from_binary( const char*,unsigned,unsigned* );
 QsExpression qs_expression_new_with_size( unsigned );
 
 /** Consumes a coefficient and integral

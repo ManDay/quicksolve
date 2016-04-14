@@ -29,8 +29,8 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 		return;
 
 	Pivot* const target = g->components[ i ];
-	const unsigned order = target->order;
-	target->solving = true;
+	const unsigned order = target->meta.order;
+	target->meta.solving = true;
 
 	Pivot* next_target = NULL;
 	QsComponent next_i = 0;
@@ -45,7 +45,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 		if( qs_pivot_graph_load( g,target->refs[ j ].head ) ) {
 			Pivot* candidate = g->components[ target->refs[ j ].head ];
 
-			const bool suitable = candidate->order!=order &&( full_back ||( ( candidate->order<order || candidate->solved )&& !candidate->solving ) );
+			const bool suitable = candidate->meta.order!=order &&( full_back ||( ( candidate->meta.solved || candidate->meta.order<order )&& !candidate->meta.solving ) );
 	
 			if( suitable ) {
 				QsTerminal wait;
@@ -71,9 +71,9 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 	}
 
 	if( next_target ) {
-		target->solved = false;
+		target->meta.solved = false;
 
-		DBG_PRINT( "Eliminating %i from %i {\n",rc,next_target->order,order );
+		DBG_PRINT( "Eliminating %i from %i {\n",rc,next_target->meta.order,order );
 		czakon_prime( g,next_i,false,rc + 1 );
 		qs_pivot_graph_relay( g,i,next_i,false );
 		DBG_PRINT( "}\n",rc );
@@ -85,8 +85,8 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 	} else {
 		/* If we ended up here because of back-substitution, solving is true
 		 * but if we haven't made any changes, solved is still true */
-		target->solving = false;
-		if( !target->solved ) {
+		target->meta.solving = false;
+		if( !target->meta.solved ) {
 
 			if( self_found ) {
 				QsTerminal wait;
@@ -95,7 +95,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 				if( !qs_coefficient_is_zero( qs_terminal_wait( wait ) ) ) {
 					qs_pivot_graph_normalize( g,i,true );
 
-					target->solved = true;
+					target->meta.solved = true;
 
 					DBG_PRINT( "Normalized %i for substitution\n",rc,order );
 					return;
@@ -114,7 +114,7 @@ void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i ) {
 	if( !qs_pivot_graph_load( g,i ) )
 		return;
 
-	DBG_PRINT( "Solving for Pivot %i {\n",0,g->components[ i ]->order );
+	DBG_PRINT( "Solving for Pivot %i {\n",0,g->components[ i ]->meta.order );
 	czakon_prime( g,i,true,1 );
 	DBG_PRINT( "}\n",0 );
 

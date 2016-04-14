@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <assert.h>
 
 struct Term {
 	QsIntegral integral;
@@ -15,16 +16,14 @@ struct QsExpression {
 	struct Term* terms;
 };
 
-QsExpression qs_expression_new_from_binary( const char* data,unsigned len,unsigned* id ) {
+QsExpression qs_expression_new_from_binary( const char* data,unsigned len,unsigned* read ) {
 	QsExpression result = malloc( sizeof (struct QsExpression) );
 	result->n_terms = 0;
 	result->allocated = 0;
 	result->terms = malloc( 0 );
 
 	int c = 0;
-	// Empty identities seem to have a 0 there instead of nothing,
-	// therefore we use an additional -1
-	while( c<len-sizeof (int)-1 ) {
+	while( c +( 2*sizeof (int)-1 )<len ) {
 		const char* base = data+c;
 		int len_integral = *( (int*)base );
 
@@ -38,8 +37,8 @@ QsExpression qs_expression_new_from_binary( const char* data,unsigned len,unsign
 		c += len_integral+len_coefficient+2*sizeof (int);
 	}
 
-	if( id )
-		*id = *( (int*)(data + c) );
+	if( read )
+		*read = c;
 
 	return result;
 }
@@ -62,7 +61,7 @@ unsigned qs_expression_to_binary( QsExpression e,char** result ) {
 			content = malloc( allocated );
 		} else {
 			if( allocated<new_size )
-				content = realloc( *result,new_size );
+				content = realloc( content,new_size );
 		}
 
 		char* int_len_base = content + size;
@@ -81,7 +80,7 @@ unsigned qs_expression_to_binary( QsExpression e,char** result ) {
 		size = new_size;
 	}
 
-	*result = realloc( *result,size );
+	*result = content;
 
 	return size;
 }

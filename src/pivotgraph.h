@@ -4,6 +4,7 @@
 #include "component.h"
 #include "operand.h"
 #include "coefficient.h"
+#include "metadata.h"
 
 struct QsReference {
 	QsComponent head;
@@ -20,8 +21,8 @@ struct QsReflist {
 	struct QsReference* references;
 };
 
-typedef struct QsReflist(* QsLoadFunction)( void*,QsComponent,unsigned* );
-typedef void(* QsSaveFunction)( void*,QsComponent,struct QsReflist,unsigned order );
+typedef struct QsReflist(* QsLoadFunction)( void*,QsComponent,struct QsMetadata* );
+typedef void(* QsSaveFunction)( void*,QsComponent,struct QsReflist,struct QsMetadata );
 
 typedef struct QsPivotGraph* QsPivotGraph;
 
