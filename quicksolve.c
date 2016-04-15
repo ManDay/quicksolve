@@ -14,57 +14,6 @@
 
 const char const usage[ ]= "The Source is the doc.";
 
-struct QsReflist loader( QsIntegralMgr m,QsComponent i,struct QsMetadata* meta ) {
-	QsExpression e = qs_integral_mgr_load_expression( m,i,meta );
-	
-	if( !e ) {
-		struct QsReflist result = { 0,NULL };
-		return result;
-	}
-
-	unsigned n = qs_expression_n_terms( e );
-
-	struct QsReflist result = { n,malloc( n*sizeof (struct QsReference) ) };
-
-	int j;
-	for( j = 0; j<n; j++ ) {
-		QsIntegral integral = qs_expression_integral( e,j );
-		QsCoefficient coefficient = qs_expression_coefficient( e,j );
-
-		result.references[ j ].coefficient = coefficient;
-		result.references[ j ].head = qs_integral_mgr_manage( m,integral );
-	}
-
-	qs_expression_disband( e );
-
-	/* Handle weird things we don't know what to do with. */
-	if( !n ) {
-		char* str;
-		qs_integral_print( qs_integral_mgr_peek( m,i ),&str );
-		fprintf( stderr,"Warning: Database empty expression for %s\n",str );
-		free( str );
-
-		result.references = realloc( result.references,sizeof (struct QsReference) );
-		result.references[ 0 ].coefficient = qs_coefficient_one( false );
-		result.references[ 0 ].head = i;
-		result.n_references = 1;
-	}
-
-	return result;
-}
-
-void saver( QsIntegralMgr m,QsComponent i,struct QsReflist l,struct QsMetadata meta ) {
-	QsExpression e = qs_expression_new_with_size( l.n_references );
-
-	int j;
-	for( j = 0; j<l.n_references; j++ )
-		qs_expression_add( e,l.references[ j ].coefficient,qs_integral_mgr_peek( m,l.references[ j ].head ) );
-
-	qs_integral_mgr_save_expression( m,i,e,meta );
-
-	qs_expression_disband( e );
-}
-
 int main( const int argc,char* const argv[ ] ) {
 	// Parse arguments
 	char* outfilename = NULL;
@@ -109,7 +58,7 @@ int main( const int argc,char* const argv[ ] ) {
 
 	QsIntegralMgr mgr = qs_integral_mgr_new( "idPR",".dat#type=kch","qsPR",".dat#type=kch" );
 	QsAEF aef = qs_aef_new( );
-	QsPivotGraph p = qs_pivot_graph_new_with_size( aef,mgr,(QsLoadFunction)loader,mgr,(QsSaveFunction)saver,10000 );
+	QsPivotGraph p = qs_pivot_graph_new_with_size( aef,mgr,(QsLoadFunction)qs_integral_mgr_load_expression,mgr,(QsSaveFunction)qs_integral_mgr_save_expression,10000 );
 
 	for( j = 0; j<num_processors; j++ )
 		qs_aef_spawn( aef,fermat_options );
