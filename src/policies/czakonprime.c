@@ -110,7 +110,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 	}
 }
 
-void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i ) {
+void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,volatile sig_atomic_t* terminate ) {
 	if( !qs_pivot_graph_load( g,i ) )
 		return;
 

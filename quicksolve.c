@@ -14,6 +14,13 @@
 
 const char const usage[ ]= "The Source is the doc.";
 
+volatile sig_atomic_t terminate = false;
+
+void signalled( int signum ) {
+	fprintf( stderr,"Received SIGINT, ignoring\n" );
+	terminate = true;
+}
+
 int main( const int argc,char* const argv[ ] ) {
 	// Parse arguments
 	char* outfilename = NULL;
@@ -43,7 +50,10 @@ int main( const int argc,char* const argv[ ] ) {
 		outfile = fopen( outfilename,"w" );
 
 	// Reap fermat processes immediately
-	signal( SIGCHLD,SIG_IGN );
+	sigaction( SIGCHLD,&(struct sigaction){ .sa_handler = SIG_IGN,.sa_flags = SA_NOCLDWAIT },NULL );
+
+	// Handle request for termination
+	sigaction( SIGINT,&(struct sigaction){ .sa_handler = signalled },NULL );
 
 	QsEvaluatorOptions fermat_options = qs_evaluator_options_new( );
 
@@ -56,7 +66,7 @@ int main( const int argc,char* const argv[ ] ) {
 	}
 
 
-	QsIntegralMgr mgr = qs_integral_mgr_new( "idPR",".dat#type=kch","qsPR",".dat#type=kch" );
+	QsIntegralMgr mgr = qs_integral_mgr_new( "idPR",".dat#type=kch","PR",".dat#type=kch" );
 	QsAEF aef = qs_aef_new( );
 	QsPivotGraph p = qs_pivot_graph_new_with_size( aef,mgr,(QsLoadFunction)qs_integral_mgr_load_expression,mgr,(QsSaveFunction)qs_integral_mgr_save_expression,10000 );
 
@@ -72,7 +82,7 @@ int main( const int argc,char* const argv[ ] ) {
 		QsIntegral i = qs_integral_new_from_string( buffer );
 		QsComponent id = qs_integral_mgr_manage( mgr,i );
 
-		qs_pivot_graph_solve( p,id );
+		qs_pivot_graph_solve( p,id,&terminate );
 		struct QsReflist* result = qs_pivot_graph_wait( p,id );
 
 		if( result ) {

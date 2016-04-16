@@ -164,6 +164,9 @@ QsEvaluator qs_evaluator_new( QsCompoundDiscoverer discover,QsEvaluatorOptions o
 		close( in_pipe[ 1 ] );
 		close( out_pipe[ 0 ] );
 
+		// Detach from PG to not receive signals
+		setpgid( 0,getpid( ) );
+
 		if( !execlp( "fermat","fermat",NULL ) )
 			fprintf( stderr,"Could not spawn fermat instance!" );
 	}
