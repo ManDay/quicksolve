@@ -61,6 +61,11 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 					next_i = target->refs[ j ].head;
 				}
 			}
+
+			/* Reassert i is inside USAGE_MARGIN. Code further down, such as
+			 * in the branch where normalization is applied will also depend
+			 * on this assertion. */
+			qs_pivot_graph_load( g,i );
 		}
 
 		if( j!=j_next && target->refs[ j ].head==i ) {
@@ -75,6 +80,11 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 
 		DBG_PRINT( "Eliminating %i from %i {\n",rc,next_target->meta.order,order );
 		czakon_prime( g,next_i,false,rc + 1 );
+
+		// Reassert next_i and i are inside USAGE_MARGIN
+		qs_pivot_graph_load( g,i );
+		qs_pivot_graph_load( g,next_i );
+
 		qs_pivot_graph_relay( g,i,next_i,false );
 		DBG_PRINT( "}\n",rc );
 
@@ -87,7 +97,6 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 		 * but if we haven't made any changes, solved is still true */
 		target->meta.solving = false;
 		if( !target->meta.solved ) {
-
 			if( self_found ) {
 				QsTerminal wait;
 				target->refs[ j_self ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j_self ].coefficient,g->aef ) );
@@ -117,6 +126,9 @@ void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,volatile sig_atomic_t* t
 	DBG_PRINT( "Solving for Pivot %i {\n",0,g->components[ i ]->meta.order );
 	czakon_prime( g,i,true,1 );
 	DBG_PRINT( "}\n",0 );
+
+	// Reassert i is inside of USAGE_MARGIN
+	qs_pivot_graph_load( g,i );
 
 	Pivot* const target = g->components[ i ];
 

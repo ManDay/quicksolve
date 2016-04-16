@@ -9,16 +9,34 @@
 
 #define COLLECT_PREALLOC 4
 
+/** Margin of pivots in memory
+ *
+ * The given number of consecutively loaded pivots is guaranteed to be
+ * still in memory after their loading while all pivots which were
+ * loaded previously to that given number may already have been written
+ * back to database. Typically, and if the policy is well-written, this
+ * value is 2 because the policies work in terms of relays, normalize
+ * and collects, which at most need 2 pivots to work with. */
+#define USAGE_MARGIN 2
+
 struct Reference {
 	QsComponent head;
 	QsOperand coefficient;
 };
 
+struct PivotLink {
+	struct PivotLink* after;
+	struct PivotLink* before;
+};
+
 typedef struct {
+	struct PivotLink usage;
+
 	unsigned n_refs;
 	struct Reference* refs;
 
 	struct QsMetadata meta;
+
 } Pivot;
 
 struct QsPivotGraph {
@@ -31,11 +49,19 @@ struct QsPivotGraph {
 	void* load_data;
 	void* save_data;
 
+	unsigned usage_limit;
+
+	struct {
+		unsigned count;
+		struct PivotLink* oldest;
+		struct PivotLink* newest;
+	} usage;
+
 	QsAEF aef;
 };
 
 
-QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunction loader,void* save_data,QsSaveFunction saver,unsigned prealloc ) {
+QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunction loader,void* save_data,QsSaveFunction saver,unsigned prealloc,bool usage_limit ) {
 	QsPivotGraph result = malloc( sizeof (struct QsPivotGraph) );
 	result->n_components = 0;
 	result->allocated = prealloc;
@@ -44,9 +70,45 @@ QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunct
 	result->load_data = load_data;
 	result->saver = saver;
 	result->save_data = save_data;
+
+	if( usage_limit )
+		result->usage_limit = prealloc;
+	else
+		result->usage_limit = 0;
+
+	result->usage.oldest = NULL;
+	result->usage.newest = NULL;
+	result->usage.count = 0;
 	result->aef = aef;
 
 	return result;
+}
+
+static void insert_usage( QsPivotGraph g,Pivot* target ) {
+	target->usage.after = NULL;
+
+	if( g->usage.oldest )
+		target->usage.before = g->usage.newest;
+	else {
+		target->usage.before = NULL;
+		g->usage.oldest = &target->usage;
+	}
+
+	g->usage.newest = &target->usage;
+}
+
+static void notify_usage( QsPivotGraph g,Pivot* target ) {
+	assert( target );
+
+	if( target->usage.after )
+		target->usage.after->before = target->usage.before;
+	else if( target->usage.before )
+		return;
+	
+	if( target->usage.before )
+		target->usage.before->after = target->usage.after;
+		
+	insert_usage( g,target );
 }
 
 static void assert_coverage( QsPivotGraph g,QsComponent i ) {
@@ -66,8 +128,11 @@ static void assert_coverage( QsPivotGraph g,QsComponent i ) {
 bool qs_pivot_graph_load( QsPivotGraph g,QsComponent i ) {
 	assert_coverage( g,i );
 
-	if( g->components[ i ] )
+	if( g->components[ i ] ) {
+		if( g->usage_limit )
+			notify_usage( g,g->components[ i ] );
 		return true;
+	}
 
 	struct QsMetadata meta;
 	struct QsReflist l = g->loader( g->load_data,i,&meta );
@@ -87,6 +152,37 @@ bool qs_pivot_graph_load( QsPivotGraph g,QsComponent i ) {
 	}
 
 	free( l.references );
+
+	/* The following ad-hoc strategy of writing back identities based on
+	 * when they were last used comes with two problems and possibly
+	 * remains a TODO:
+	 *
+	 * 1) If this thread does not block on writing them back because
+	 * the actual write is performed asynchronously by IntegralMgr, the
+	 * actual removal of identities takes place here and they are removed
+	 * instantly. The the write-back, due to asynchronicity, may lagg
+	 * behind this thread and there may be a situation when the data that was
+	 * already removed is actually still in memory, but no longer
+	 * accessible from this point because they were removed from the pivot
+	 * graph. If we then try to load that data again
+	 * 
+	 * a) we must wait for the write-back and following read
+	 * b) the write-back is useless in the first place
+	 *
+	 * It might therefore be worth considering that also the removal from
+	 * the pivot graph is initiated from the asynchronous context which
+	 * would prevent "false" removals, i.e. removals which happen although
+	 * it is already determined that the entry would be needed.
+	 *
+	 * 2) The priority of removal does not account for the fact that
+	 * writing back an identity blocks reading all other identities from
+	 * the same database.
+	 */
+	if( g->usage_limit ) {
+		insert_usage( g,result );
+		if( g->usage.count++>=g->usage_limit + 2 ) {
+		}
+	}
 
 	return true;
 }

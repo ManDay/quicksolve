@@ -26,11 +26,13 @@ int main( const int argc,char* const argv[ ] ) {
 	char* outfilename = NULL;
 	int num_processors = 1;
 	bool help = false;
+	bool usage_limit = false;
+	unsigned prealloc = 1024;
 	FILE* infile = NULL;
 	FILE* outfile = stdout;
 
 	int opt;
-	while( ( opt = getopt( argc,argv,"p:" ) )!=-1 ) {
+	while( ( opt = getopt( argc,argv,"p:w:l" ) )!=-1 ) {
 		switch( opt ) {
 		case 'p':
 			if( ( num_processors = strtol( optarg,NULL,0 ) )<1 )
@@ -38,6 +40,14 @@ int main( const int argc,char* const argv[ ] ) {
 			break;
 		case 'o':
 			outfilename = optarg;
+			break;
+		case 'w':
+			if( ( prealloc = strtol( optarg,NULL,0 ) )<0 )
+				help = true;
+			break;
+		case 'l':
+			usage_limit = true;
+			break;
 		}
 	}
 
@@ -68,7 +78,7 @@ int main( const int argc,char* const argv[ ] ) {
 
 	QsIntegralMgr mgr = qs_integral_mgr_new( "idPR",".dat#type=kch","PR",".dat#type=kch" );
 	QsAEF aef = qs_aef_new( );
-	QsPivotGraph p = qs_pivot_graph_new_with_size( aef,mgr,(QsLoadFunction)qs_integral_mgr_load_expression,mgr,(QsSaveFunction)qs_integral_mgr_save_expression,10000 );
+	QsPivotGraph p = qs_pivot_graph_new_with_size( aef,mgr,(QsLoadFunction)qs_integral_mgr_load_expression,mgr,(QsSaveFunction)qs_integral_mgr_save_expression,prealloc,usage_limit );
 
 	for( j = 0; j<num_processors; j++ )
 		qs_aef_spawn( aef,fermat_options );
