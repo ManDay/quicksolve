@@ -44,14 +44,18 @@ static struct Databases open_db( QsIntegralMgr m,QsPrototype p,bool create_rw ) 
 		m->n_dbs = p + 1;
 	}
 
-	if( !m->dbs[ p ] ) {
+	bool new;
+	if( ( new = !m->dbs[ p ] ) ) {
 		m->dbs[ p ]= malloc( sizeof (struct Databases) );
 
 		char* filename;
 		asprintf( &filename,"%s%i%s",m->ro_prefix,p,m->ro_suffix );
 		m->dbs[ p ]->read = qs_db_new( filename,QS_DB_READ );
 		free( filename );
+	}
 
+	if( new || ( !m->dbs[ p ]->readwrite && create_rw ) ) {
+		char* filename;
 		asprintf( &filename,"%s%i%s",m->rw_prefix,p,m->rw_suffix );
 		m->dbs[ p ]->readwrite = qs_db_new( filename,QS_DB_WRITE|( create_rw?QS_DB_CREATE:0 ) );
 		free( filename );
@@ -110,6 +114,12 @@ static struct Databases open_db( QsIntegralMgr m,QsPrototype p,bool create_rw ) 
  * Currently, the seven bytes metadata are assigned as
  *
  * <Metadata> = <Order:int> <Solved:char> '\0' '\0'
+ *
+ * Expressions with metadata are interpreted as identities as-is, as are
+ * Expressions with order. Empty expressions with and without order as
+ * well as Expressions without metadata in the solution database are
+ * interpreted as the given expression -1 times the integral to which is
+ * is associated. * 
  */
 
 void qs_integral_mgr_save_expression( QsIntegralMgr m,QsComponent i,struct QsReflist l,struct QsMetadata meta ) {
@@ -169,11 +179,10 @@ struct QsReflist qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,
 		} else {
 			meta->order = 0;
 			meta->solved = true;
+			sub_self = true;
 		}
 
 		meta->solving = false;
-
-		sub_self = true;
 
 		qs_db_entry_destroy( data );
 	} else if( dbs.read &&( data = qs_db_get( dbs.read,(char*)pwrs,keylen ) ) ) {

@@ -27,9 +27,14 @@ struct Reference {
 struct PivotLink {
 	struct PivotLink* after;
 	struct PivotLink* before;
+	QsComponent component;
 };
 
 typedef struct {
+	/* The associated PivotLink
+	 * 
+	 * For quicker access from the PivotLink to the associated Pivot, the
+	 * PivotLink is made the first member. */
 	struct PivotLink usage;
 
 	unsigned n_refs;
@@ -87,9 +92,10 @@ QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunct
 static void insert_usage( QsPivotGraph g,Pivot* target ) {
 	target->usage.after = NULL;
 
-	if( g->usage.oldest )
+	if( g->usage.oldest ) {
 		target->usage.before = g->usage.newest;
-	else {
+		g->usage.newest->after = &target->usage;
+	} else {
 		target->usage.before = NULL;
 		g->usage.oldest = &target->usage;
 	}
@@ -98,11 +104,9 @@ static void insert_usage( QsPivotGraph g,Pivot* target ) {
 }
 
 static void notify_usage( QsPivotGraph g,Pivot* target ) {
-	assert( target );
-
 	if( target->usage.after )
 		target->usage.after->before = target->usage.before;
-	else if( target->usage.before )
+	else
 		return;
 	
 	if( target->usage.before )
@@ -123,6 +127,15 @@ static void assert_coverage( QsPivotGraph g,QsComponent i ) {
 		g->components[ j ]= NULL;
 	
 	g->n_components = i + 1;
+}
+
+static void free_pivot( Pivot* p ) {
+	int j;
+	for( j = 0; j<p->n_refs; j++ )
+		qs_operand_unref( (QsOperand)p->refs[ j ].coefficient );
+
+	free( p->refs );
+	free( p );
 }
 
 bool qs_pivot_graph_load( QsPivotGraph g,QsComponent i ) {
@@ -180,7 +193,30 @@ bool qs_pivot_graph_load( QsPivotGraph g,QsComponent i ) {
 	 */
 	if( g->usage_limit ) {
 		insert_usage( g,result );
+		result->usage.component = i;
+
 		if( g->usage.count++>=g->usage_limit + 2 ) {
+			struct PivotLink* target_link = g->usage.oldest;
+			Pivot* target = (Pivot*)target_link;
+			DBG_PRINT( "Writing pivot %i back to database synchronously\n",0,target->meta.order );
+
+			struct QsReflist l = { target->n_refs,malloc( target->n_refs*sizeof (struct QsReference) ) };
+
+			int j;
+			for( j = 0; j<target->n_refs; j++ )
+				target->refs[ j ].coefficient = (QsOperand)qs_operand_terminate( target->refs[ j ].coefficient,g->aef );
+
+			for( j = 0; j<target->n_refs; j++ )
+				l.references[ j ]= (struct QsReference){ target->refs[ j ].head,qs_terminal_wait( (QsTerminal)target->refs[ j ].coefficient ) };
+
+			g->saver( g->save_data,i,l,target->meta );
+			
+			g->usage.oldest = target_link->after;
+			target_link->after->before = NULL;
+
+			g->components[ target_link->component ]= NULL;
+			free_pivot( target );
+			g->usage.count--;
 		}
 	}
 
@@ -383,15 +419,6 @@ struct QsReflist* qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
 
 	return result;
 }	
-
-static void free_pivot( Pivot* p ) {
-	int j;
-	for( j = 0; j<p->n_refs; j++ )
-		qs_operand_unref( (QsOperand)p->refs[ j ].coefficient );
-
-	free( p->refs );
-	free( p );
-}
 
 void qs_pivot_graph_destroy( QsPivotGraph g ) {
 	int j;
