@@ -530,6 +530,11 @@ void qs_operand_unref( QsOperand o ) {
 		} else {
 			QsIntermediate target = (QsIntermediate)o;
 
+			/* We assert that no one is unref'ing an Operand whose value has
+			 * never been made any use. If this QsIntermediate were inside a
+			 * dependency chain (and we did not loose any references) and
+			 * could therefore still be made use of, the depending operands
+			 * would hold a reference. */
 			assert( !target->cache_tails );
 			expression_clean( &target->expression );
 		}

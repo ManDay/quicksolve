@@ -32,5 +32,6 @@ QsPivotGraph qs_pivot_graph_new_with_size( QsAEF,void*,QsLoadFunction,void*,QsSa
 void qs_pivot_graph_solve( QsPivotGraph,QsComponent,volatile sig_atomic_t* );
 struct QsReflist* qs_pivot_graph_wait( QsPivotGraph,QsComponent );
 void qs_pivot_graph_destroy( QsPivotGraph );
+void qs_pivot_graph_save( QsPivotGraph,QsComponent );
 
 #endif

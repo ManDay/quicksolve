@@ -17,7 +17,7 @@ const char const usage[ ]= "The Source is the doc.";
 volatile sig_atomic_t terminate = false;
 
 void signalled( int signum ) {
-	fprintf( stderr,"Received SIGINT, ignoring\n" );
+	fprintf( stderr,"Warning: Termination scheduled\n" );
 	terminate = true;
 }
 

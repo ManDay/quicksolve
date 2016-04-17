@@ -24,11 +24,13 @@
  *   problematic pivot.
  * - Attempt further eliminations on problematic pivot.
  */
-static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned rc ) {
-	if( !qs_pivot_graph_load( g,i ) )
+
+static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned rc,volatile sig_atomic_t* const terminate  ) {
+	Pivot* target = load_pivot( g,i );
+
+	if( !target )
 		return;
 
-	Pivot* const target = g->components[ i ];
 	const unsigned order = target->meta.order;
 	target->meta.solving = true;
 
@@ -40,9 +42,12 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 	int j = 0;
 
 	while( j<target->n_refs && !next_target ) {
+		if( *terminate )
+			return;
+
 		int j_next = j + 1;
 
-		if( qs_pivot_graph_load( g,target->refs[ j ].head ) ) {
+		if( load_pivot( g,target->refs[ j ].head ) ) {
 			Pivot* candidate = g->components[ target->refs[ j ].head ];
 
 			const bool suitable = candidate->meta.order!=order &&( full_back ||( ( candidate->meta.solved || candidate->meta.order<order )&& !candidate->meta.solving ) );
@@ -64,8 +69,11 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 
 			/* Reassert i is inside USAGE_MARGIN. Code further down, such as
 			 * in the branch where normalization is applied will also depend
-			 * on this assertion. */
-			qs_pivot_graph_load( g,i );
+			 * on this assertion. Since its is inside USAGE_MARGIN at this
+			 * point (only the load in the loop occured since the last
+			 * assertion), there is no reload and we don't need to recheck the
+			 * location in memory, i.e. target remains unchanged.*/
+			load_pivot( g,i );
 		}
 
 		if( j!=j_next && target->refs[ j ].head==i ) {
@@ -79,19 +87,28 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 		target->meta.solved = false;
 
 		DBG_PRINT( "Eliminating %i from %i {\n",rc,next_target->meta.order,order );
-		czakon_prime( g,next_i,false,rc + 1 );
+		czakon_prime( g,next_i,false,rc + 1,terminate );
 
-		// Reassert next_i and i are inside USAGE_MARGIN
-		qs_pivot_graph_load( g,i );
-		qs_pivot_graph_load( g,next_i );
+		if( *terminate ) {
+			DBG_PRINT( "}\n",rc );
+			return;
+		}
 
+		/* Reassert next_i and i are inside USAGE_MARGIN, update memory
+		 * location contrary to above! */
+		next_target = load_pivot( g,next_i );
+		target = load_pivot( g,i );
+
+		/* We bake neither the relay nor the collect, because we will
+		 * eventually bake the current pivot on normalize. */
 		qs_pivot_graph_relay( g,i,next_i,false );
-		DBG_PRINT( "}\n",rc );
 
 		for( j = 0; j<target->n_refs; j++ )
 			qs_pivot_graph_collect( g,i,target->refs[ j ].head,false );
 
-		czakon_prime( g,i,full_back,rc );
+		DBG_PRINT( "}\n",rc );
+
+		czakon_prime( g,i,full_back,rc,terminate );
 	} else {
 		/* If we ended up here because of back-substitution, solving is true
 		 * but if we haven't made any changes, solved is still true */
@@ -113,22 +130,22 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 
 			DBG_PRINT( "Normalization of %i failed, forcing full solution {\n",rc,order );
 			fprintf( stderr,"Warning: Canonical elimination in %i not normalizable (Recursion depth %i)\n",order,rc );
-			czakon_prime( g,i,true,rc + 1 );
+			czakon_prime( g,i,true,rc + 1,terminate );
 			DBG_PRINT( "}\n",rc );
 		}
 	}
 }
 
-void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,volatile sig_atomic_t* terminate ) {
-	if( !qs_pivot_graph_load( g,i ) )
+void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,volatile sig_atomic_t* const terminate ) {
+	if( !load_pivot( g,i ) )
 		return;
 
 	DBG_PRINT( "Solving for Pivot %i {\n",0,g->components[ i ]->meta.order );
-	czakon_prime( g,i,true,1 );
+	czakon_prime( g,i,true,1,terminate );
 	DBG_PRINT( "}\n",0 );
 
 	// Reassert i is inside of USAGE_MARGIN
-	qs_pivot_graph_load( g,i );
+	load_pivot( g,i );
 
 	Pivot* const target = g->components[ i ];
 
@@ -144,4 +161,7 @@ void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,volatile sig_atomic_t* t
 		} else
 			j++;
 	}
+
+	for( j = 0; j<g->n_components; j++ )
+		qs_pivot_graph_save( g,j );
 }

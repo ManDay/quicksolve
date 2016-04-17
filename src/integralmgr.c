@@ -140,8 +140,8 @@ void qs_integral_mgr_save_expression( QsIntegralMgr m,QsComponent i,struct QsRef
 	unsigned expression_size = qs_expression_to_binary( e,&entry->val );
 	entry->vallen = expression_size + QS_METADATA_SIZE;
 	entry->val = realloc( entry->val,entry->vallen );
-	*( (int*)( entry->val + entry->vallen ) )= meta.order;
-	*( (char*)( entry->val + entry->vallen + sizeof (int) ) )= meta.solved?1:0;
+	*( (int*)( entry->val + expression_size ) )= meta.order;
+	*( (char*)( entry->val + expression_size + sizeof (int) ) )= meta.solved?1:0;
 
 	qs_db_set( dbs.readwrite,entry );
 
@@ -173,7 +173,7 @@ struct QsReflist qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,
 		unsigned n;
 		e = qs_expression_new_from_binary( data->val,data->vallen,&n );
 
-		if( data->vallen>n+6 ) {
+		if( data->vallen>=n+QS_METADATA_SIZE ) {
 			meta->order = *( (int*)( data->val + n ) );
 			meta->solved = *( (char*)( data->val + n + sizeof (int) ) )!='\0';
 		} else {
@@ -232,7 +232,7 @@ struct QsReflist qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,
 			free( str );
 		}
 	}
-
+	
 	return result;
 }
 
