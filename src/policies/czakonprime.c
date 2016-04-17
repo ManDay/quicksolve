@@ -50,7 +50,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 		if( load_pivot( g,target->refs[ j ].head ) ) {
 			Pivot* candidate = g->components[ target->refs[ j ].head ];
 
-			const bool suitable = candidate->meta.order!=order &&( full_back ||( ( candidate->meta.solved || candidate->meta.order<order )&& !candidate->meta.solving ) );
+			const bool suitable = target->refs[ j ].head!=i &&( full_back ||( ( candidate->meta.solved || candidate->meta.order<order )&& !candidate->meta.solving ) );
 	
 			if( suitable ) {
 				QsTerminal wait;
@@ -152,8 +152,8 @@ void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,volatile sig_atomic_t* c
 	// Clean up zeroes from the last steps
 	int j = 0;
 	while( j<target->n_refs ) {
-		QsTerminal wait;
-		target->refs[ j ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef ) );
+		QsTerminal wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef );
+		target->refs[ j ].coefficient = (QsOperand)wait;
 		QsCoefficient val = qs_terminal_wait( wait );
 
 		if( qs_coefficient_is_zero( val ) ) {

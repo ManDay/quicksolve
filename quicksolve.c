@@ -89,7 +89,7 @@ int main( const int argc,char* const argv[ ] ) {
 	ssize_t chars;
 	size_t N = 0;
 	char* buffer = NULL;
-	while( ( chars = getline( &buffer,&N,infile ) )!=-1 ) {
+	while( ( chars = getline( &buffer,&N,infile ) )!=-1 && !terminate ) {
 		QsIntegral i = qs_integral_new_from_string( buffer );
 		QsComponent id = qs_integral_mgr_manage( mgr,i );
 
