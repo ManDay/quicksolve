@@ -243,10 +243,6 @@ QsIntegral qs_integral_mgr_peek( QsIntegralMgr m,QsComponent i ) {
 	return m->integrals[ i ].integral;
 }
 
-QsIntegralMgr qs_integral_mgr_new( const char* ro_prefix,const char* ro_suffix,const char* rw_prefix,const char* rw_suffix ) {
-	return qs_integral_mgr_new_with_size( ro_prefix,rw_suffix,rw_prefix,rw_suffix,0 );
-}
-
 QsIntegralMgr qs_integral_mgr_new_with_size( const char* ro_prefix,const char* ro_suffix,const char* rw_prefix,const char* rw_suffix,unsigned prealloc ) {
 	QsIntegralMgr result = malloc( sizeof (struct QsIntegralMgr) );
 	result->n_integrals = 0;

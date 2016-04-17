@@ -26,8 +26,8 @@ int main( const int argc,char* const argv[ ] ) {
 	char* outfilename = NULL;
 	int num_processors = 1;
 	bool help = false;
-	bool usage_limit = false;
-	unsigned prealloc = 1024;
+	unsigned usage_limit = 0;
+	unsigned prealloc = 1<<20;
 	FILE* infile = NULL;
 	FILE* outfile = stdout;
 
@@ -46,7 +46,8 @@ int main( const int argc,char* const argv[ ] ) {
 				help = true;
 			break;
 		case 'l':
-			usage_limit = true;
+			if( ( usage_limit = strtol( optarg,NULL,0 ) )<0 )
+				help = true;
 			break;
 		}
 	}
@@ -76,7 +77,7 @@ int main( const int argc,char* const argv[ ] ) {
 	}
 
 
-	QsIntegralMgr mgr = qs_integral_mgr_new( "idPR",".dat#type=kch","PR",".dat#type=kch" );
+	QsIntegralMgr mgr = qs_integral_mgr_new_with_size( "idPR",".dat#type=kch","PR",".dat#type=kch",prealloc );
 	QsAEF aef = qs_aef_new( );
 	QsPivotGraph p = qs_pivot_graph_new_with_size( aef,mgr,(QsLoadFunction)qs_integral_mgr_load_expression,mgr,(QsSaveFunction)qs_integral_mgr_save_expression,prealloc,usage_limit );
 

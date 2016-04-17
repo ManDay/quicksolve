@@ -66,7 +66,7 @@ struct QsPivotGraph {
 };
 
 
-QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunction loader,void* save_data,QsSaveFunction saver,unsigned prealloc,bool usage_limit ) {
+QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunction loader,void* save_data,QsSaveFunction saver,unsigned prealloc,unsigned usage_limit ) {
 	QsPivotGraph result = malloc( sizeof (struct QsPivotGraph) );
 	result->n_components = 0;
 	result->allocated = prealloc;
@@ -75,11 +75,7 @@ QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunct
 	result->load_data = load_data;
 	result->saver = saver;
 	result->save_data = save_data;
-
-	if( usage_limit )
-		result->usage_limit = prealloc;
-	else
-		result->usage_limit = 0;
+	result->usage_limit = usage_limit;
 
 	result->usage.oldest = NULL;
 	result->usage.newest = NULL;
@@ -132,8 +128,10 @@ static void assert_coverage( QsPivotGraph g,QsComponent i ) {
 	if( g->n_components>i )
 		return;
 
-	if( !( g->allocated>i ) )
+	if( !( g->allocated>i ) ) {
+		fprintf( stderr,"Warning: Preallocated space did not suffice for %i pivots\n",i+1 );
 		g->components = realloc( g->components,( g->allocated = i + 1 )*sizeof (Pivot*) );
+	}
 
 	int j;
 	for( j = g->n_components; !( j>i ); j++ )
