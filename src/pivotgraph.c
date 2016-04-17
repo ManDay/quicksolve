@@ -441,10 +441,13 @@ void qs_pivot_graph_save( QsPivotGraph g,QsComponent i ) {
 }
 
 void qs_pivot_graph_destroy( QsPivotGraph g ) {
+
 	int j;
 	for( j = 0; j<g->n_components; j++ )
-		if( g->components[ j ] )
+		if( g->components[ j ] ) {
+			qs_pivot_graph_save( g,j );
 			free_pivot( g->components[ j ] );
+		}
 
 	free( g->components );
 	free( g );

@@ -93,32 +93,35 @@ int main( const int argc,char* const argv[ ] ) {
 		QsComponent id = qs_integral_mgr_manage( mgr,i );
 
 		qs_pivot_graph_solve( p,id,&terminate );
-		struct QsReflist* result = qs_pivot_graph_wait( p,id );
 
-		if( result ) {
-			char* head,* coeff;
+		if( !terminate ) {
+			struct QsReflist* result = qs_pivot_graph_wait( p,id );
 
-			qs_integral_print( qs_integral_mgr_peek( mgr,id ),&head );
-			printf( "fill %s =",head );
-			free( head );
+			if( result ) {
+				char* head,* coeff;
 
-			if( result->n_references>1 ) {
-				int j;
-				for( j = 0; j<result->n_references; j++ )
-					if( result->references[ j ].head!=id ) {
-						qs_integral_print( qs_integral_mgr_peek( mgr,result->references[ j ].head ),&head );
-						qs_coefficient_print( result->references[ j ].coefficient,&coeff );
-						printf( "\n + %s * (%s)",head,coeff );
-						free( coeff );
-						free( head );
-					}
-			} else
-				printf( "\n0" );
+				qs_integral_print( qs_integral_mgr_peek( mgr,id ),&head );
+				printf( "fill %s =",head );
+				free( head );
 
-			printf( "\n;\n" );
+				if( result->n_references>1 ) {
+					int j;
+					for( j = 0; j<result->n_references; j++ )
+						if( result->references[ j ].head!=id ) {
+							qs_integral_print( qs_integral_mgr_peek( mgr,result->references[ j ].head ),&head );
+							qs_coefficient_print( result->references[ j ].coefficient,&coeff );
+							printf( "\n + %s * (%s)",head,coeff );
+							free( coeff );
+							free( head );
+						}
+				} else
+					printf( "\n0" );
 
-			free( result->references );
-			free( result );
+				printf( "\n;\n" );
+
+				free( result->references );
+				free( result );
+			}
 		}
 	}
 

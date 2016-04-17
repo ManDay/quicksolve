@@ -149,6 +149,7 @@ void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,volatile sig_atomic_t* c
 
 	Pivot* const target = g->components[ i ];
 
+	// Clean up zeroes from the last steps
 	int j = 0;
 	while( j<target->n_refs ) {
 		QsTerminal wait;
@@ -161,7 +162,4 @@ void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,volatile sig_atomic_t* c
 		} else
 			j++;
 	}
-
-	for( j = 0; j<g->n_components; j++ )
-		qs_pivot_graph_save( g,j );
 }
