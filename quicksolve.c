@@ -12,7 +12,17 @@
 #include "src/print.h"
 #include "src/pivotgraph.h"
 
-const char const usage[ ]= "The Source is the doc.";
+#define DEF_NUM_PROCESSORS 1
+#define DEF_PREALLOC 1<<20
+#define DEF_USAGE_LIMIT 0
+#define STR( X ) #X
+#define XSTR( X ) STR( X )
+
+const char const usage[ ]= "[-p <Threads>] [-a <Identity limit>] [-w <Usage limit>] [-i <In file>] [-o <Out file>]\n"
+	"<Threads>: Number of evaluators in parallel calculation [Default " XSTR( DEF_NUM_PROCESSORS ) "]\n"
+	"<Identity limit>: Upper bound on the number of identities in the system [Default " XSTR( DEF_PREALLOC ) "]\n"
+	"<Usage limit>: Maximum number of identities to keep in memory or 0 if unlimited [Default " XSTR( DEF_USAGE_LIMIT ) "]\n"
+	"Reads list of integrals from stdin and produces FORM fill statements for those integrals in terms of master integrals to stdout. For further documentation see the manual that came with Quicksolve";
 
 volatile sig_atomic_t terminate = false;
 
@@ -23,42 +33,35 @@ void signalled( int signum ) {
 
 int main( const int argc,char* const argv[ ] ) {
 	// Parse arguments
-	char* outfilename = NULL;
-	int num_processors = 1;
+	int num_processors = DEF_NUM_PROCESSORS;
+	unsigned usage_limit = DEF_USAGE_LIMIT;
+	unsigned prealloc = DEF_PREALLOC;
 	bool help = false;
-	unsigned usage_limit = 0;
-	unsigned prealloc = 1<<20;
-	FILE* infile = NULL;
+	FILE* infile = stdin;
 	FILE* outfile = stdout;
 
 	int opt;
-	while( ( opt = getopt( argc,argv,"p:w:l" ) )!=-1 ) {
+	while( ( opt = getopt( argc,argv,"p:a:w:" ) )!=-1 ) {
 		switch( opt ) {
 		case 'p':
 			if( ( num_processors = strtol( optarg,NULL,0 ) )<1 )
 				help = true;
 			break;
-		case 'o':
-			outfilename = optarg;
-			break;
-		case 'w':
+		case 'a':
 			if( ( prealloc = strtol( optarg,NULL,0 ) )<0 )
 				help = true;
 			break;
-		case 'l':
+		case 'w':
 			if( ( usage_limit = strtol( optarg,NULL,0 ) )<0 )
 				help = true;
 			break;
 		}
 	}
 
-	if( argc-optind<1 || !( infile = fopen( argv[ optind ],"r" ) )|| help ) {
+	if( help ) {
 		printf( "%s %s\n",argv[ 0 ],usage );
 		exit( EXIT_FAILURE );
 	}
-
-	if( outfilename )
-		outfile = fopen( outfilename,"w" );
 
 	// Reap fermat processes immediately
 	sigaction( SIGCHLD,&(struct sigaction){ .sa_handler = SIG_IGN,.sa_flags = SA_NOCLDWAIT },NULL );
@@ -69,7 +72,7 @@ int main( const int argc,char* const argv[ ] ) {
 	QsEvaluatorOptions fermat_options = qs_evaluator_options_new( );
 
 	int j;
-	for( j = optind + 1; j<argc; j++ ) {
+	for( j = optind; j<argc; j++ ) {
 		char* symbol = strtok( argv[ j ],"=" );
 		char* value = strtok( NULL,"" );
 
@@ -89,40 +92,41 @@ int main( const int argc,char* const argv[ ] ) {
 	ssize_t chars;
 	size_t N = 0;
 	char* buffer = NULL;
-	while( ( chars = getline( &buffer,&N,infile ) )!=-1 && !terminate ) {
+	while( ( chars = getline( &buffer,&N,infile ) )!=-1 ) {
 		QsIntegral i = qs_integral_new_from_string( buffer );
 		QsComponent id = qs_integral_mgr_manage( mgr,i );
 
 		qs_pivot_graph_solve( p,id,&terminate );
 
-		if( !terminate ) {
-			struct QsReflist* result = qs_pivot_graph_wait( p,id );
+		if( terminate )
+			break;
 
-			if( result ) {
-				char* head,* coeff;
+		struct QsReflist* result = qs_pivot_graph_wait( p,id );
 
-				qs_integral_print( qs_integral_mgr_peek( mgr,id ),&head );
-				printf( "fill %s =",head );
-				free( head );
+		if( result ) {
+			char* head,* coeff;
 
-				if( result->n_references>1 ) {
-					int j;
-					for( j = 0; j<result->n_references; j++ )
-						if( result->references[ j ].head!=id ) {
-							qs_integral_print( qs_integral_mgr_peek( mgr,result->references[ j ].head ),&head );
-							qs_coefficient_print( result->references[ j ].coefficient,&coeff );
-							printf( "\n + %s * (%s)",head,coeff );
-							free( coeff );
-							free( head );
-						}
-				} else
-					printf( "\n0" );
+			qs_integral_print( qs_integral_mgr_peek( mgr,id ),&head );
+			fprintf( outfile,"fill %s =",head );
+			free( head );
 
-				printf( "\n;\n" );
+			if( result->n_references>1 ) {
+				int j;
+				for( j = 0; j<result->n_references; j++ )
+					if( result->references[ j ].head!=id ) {
+						qs_integral_print( qs_integral_mgr_peek( mgr,result->references[ j ].head ),&head );
+						qs_coefficient_print( result->references[ j ].coefficient,&coeff );
+						fprintf( outfile,"\n + %s * (%s)",head,coeff );
+						free( coeff );
+						free( head );
+					}
+			} else
+				fprintf( outfile,"\n0" );
 
-				free( result->references );
-				free( result );
-			}
+			fprintf( outfile,"\n;\n" );
+
+			free( result->references );
+			free( result );
 		}
 	}
 
@@ -133,8 +137,7 @@ int main( const int argc,char* const argv[ ] ) {
 	qs_integral_mgr_destroy( mgr );
 	
 	fclose( infile );
-	if( outfilename )
-		fclose( outfile );
+	fclose( outfile );
 				
 	exit( EXIT_SUCCESS );
 }
