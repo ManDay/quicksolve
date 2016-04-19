@@ -16,6 +16,9 @@ QsIntegral qs_integral_new_from_string( const char* s ) {
 	const char* prototype_str = s+2;
 	char* power_end = strchr( s,'(' );
 
+	if( !power_end || strlen( s )<6 )
+		return NULL;
+
 	QsIntegral result = malloc( sizeof (struct QsIntegral) );
 
 	result->prototype = strtoul( prototype_str,NULL,0 );

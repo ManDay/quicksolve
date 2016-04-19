@@ -18,10 +18,10 @@
 #define STR( X ) #X
 #define XSTR( X ) STR( X )
 
-const char const usage[ ]= "[-p <Threads>] [-a <Identity limit>] [-w <Usage limit>] [-i <In file>] [-o <Out file>] [<Symbol>[=<Subsitution>] ...]\n"
+const char const usage[ ]= "[-p <Threads>] [-a <Identity limit>] [-w <Usage limit>] [-i <In file>] [-o <Out file>] [<Symbol>[=<Subsitution>] ...]\n\n"
 	"<Threads>: Number of evaluators in parallel calculation [Default " XSTR( DEF_NUM_PROCESSORS ) "]\n"
 	"<Identity limit>: Upper bound on the number of identities in the system [Default " XSTR( DEF_PREALLOC ) "]\n"
-	"<Usage limit>: Maximum number of identities to keep in memory or 0 if unlimited [Default " XSTR( DEF_USAGE_LIMIT ) "]\n"
+	"<Usage limit>: Maximum number of identities to keep in memory or 0 if unlimited [Default " XSTR( DEF_USAGE_LIMIT ) "]\n\n"
 	"Reads list of integrals from stdin and produces FORM fill statements for those integrals in terms of master integrals to stdout. All occurring symbols from the identity databases must be registered as positional arguments and can optionally be chosen to be replaced.\n"
 	"For further documentation see the manual that came with Quicksolve";
 
@@ -42,19 +42,23 @@ int main( const int argc,char* const argv[ ] ) {
 	FILE* outfile = stdout;
 
 	int opt;
-	while( ( opt = getopt( argc,argv,"p:a:w:" ) )!=-1 ) {
+	while( ( opt = getopt( argc,argv,"p:a:w:h" ) )!=-1 ) {
+		char* endptr;
 		switch( opt ) {
 		case 'p':
-			if( ( num_processors = strtol( optarg,NULL,0 ) )<1 )
+			if( ( num_processors = strtol( optarg,&endptr,0 ) )<1 || *endptr!='\0' )
 				help = true;
 			break;
 		case 'a':
-			if( ( prealloc = strtol( optarg,NULL,0 ) )<0 )
+			if( ( prealloc = strtol( optarg,&endptr,0 ) )<0 || *endptr!='\0' )
 				help = true;
 			break;
 		case 'w':
-			if( ( usage_limit = strtol( optarg,NULL,0 ) )<0 )
+			if( ( usage_limit = strtol( optarg,&endptr,0 ) )<0 || *endptr!='\0' )
 				help = true;
+			break;
+		case 'h':
+			help = true;
 			break;
 		}
 	}
@@ -98,40 +102,43 @@ int main( const int argc,char* const argv[ ] ) {
 	char* buffer = NULL;
 	while( ( chars = getline( &buffer,&N,infile ) )!=-1 ) {
 		QsIntegral i = qs_integral_new_from_string( buffer );
-		QsComponent id = qs_integral_mgr_manage( mgr,i );
+		if( i ) {
+			QsComponent id = qs_integral_mgr_manage( mgr,i );
 
-		qs_pivot_graph_solve( p,id,&terminate );
+			qs_pivot_graph_solve( p,id,&terminate );
 
-		if( terminate )
-			break;
+			if( terminate )
+				break;
 
-		struct QsReflist* result = qs_pivot_graph_wait( p,id );
+			struct QsReflist* result = qs_pivot_graph_wait( p,id );
 
-		if( result ) {
-			char* head,* coeff;
+			if( result ) {
+				char* head,* coeff;
 
-			qs_integral_print( qs_integral_mgr_peek( mgr,id ),&head );
-			fprintf( outfile,"fill %s =",head );
-			free( head );
+				qs_integral_print( qs_integral_mgr_peek( mgr,id ),&head );
+				fprintf( outfile,"fill %s =",head );
+				free( head );
 
-			if( result->n_references>1 ) {
-				int j;
-				for( j = 0; j<result->n_references; j++ )
-					if( result->references[ j ].head!=id ) {
-						qs_integral_print( qs_integral_mgr_peek( mgr,result->references[ j ].head ),&head );
-						qs_coefficient_print( result->references[ j ].coefficient,&coeff );
-						fprintf( outfile,"\n + %s * (%s)",head,coeff );
-						free( coeff );
-						free( head );
-					}
-			} else
-				fprintf( outfile,"\n0" );
+				if( result->n_references>1 ) {
+					int j;
+					for( j = 0; j<result->n_references; j++ )
+						if( result->references[ j ].head!=id ) {
+							qs_integral_print( qs_integral_mgr_peek( mgr,result->references[ j ].head ),&head );
+							qs_coefficient_print( result->references[ j ].coefficient,&coeff );
+							fprintf( outfile,"\n + %s * (%s)",head,coeff );
+							free( coeff );
+							free( head );
+						}
+				} else
+					fprintf( outfile,"\n0" );
 
-			fprintf( outfile,"\n;\n" );
+				fprintf( outfile,"\n;\n" );
 
-			free( result->references );
-			free( result );
-		}
+				free( result->references );
+				free( result );
+			}
+		} else
+			fprintf( stderr,"Warning: Could not parse '%s'\n",buffer );
 	}
 
 	free( buffer );
