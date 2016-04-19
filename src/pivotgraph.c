@@ -436,6 +436,8 @@ void qs_pivot_graph_save( QsPivotGraph g,QsComponent i ) {
 		l.references[ j ]= (struct QsReference){ target->refs[ j ].head,qs_terminal_wait( (QsTerminal)target->refs[ j ].coefficient ) };
 
 	g->saver( g->save_data,i,l,target->meta );
+
+	free( l.references );
 }
 
 void qs_pivot_graph_destroy( QsPivotGraph g ) {

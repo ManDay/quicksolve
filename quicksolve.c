@@ -18,11 +18,12 @@
 #define STR( X ) #X
 #define XSTR( X ) STR( X )
 
-const char const usage[ ]= "[-p <Threads>] [-a <Identity limit>] [-w <Usage limit>] [-i <In file>] [-o <Out file>]\n"
+const char const usage[ ]= "[-p <Threads>] [-a <Identity limit>] [-w <Usage limit>] [-i <In file>] [-o <Out file>] [<Symbol>[=<Subsitution>] ...]\n"
 	"<Threads>: Number of evaluators in parallel calculation [Default " XSTR( DEF_NUM_PROCESSORS ) "]\n"
 	"<Identity limit>: Upper bound on the number of identities in the system [Default " XSTR( DEF_PREALLOC ) "]\n"
 	"<Usage limit>: Maximum number of identities to keep in memory or 0 if unlimited [Default " XSTR( DEF_USAGE_LIMIT ) "]\n"
-	"Reads list of integrals from stdin and produces FORM fill statements for those integrals in terms of master integrals to stdout. For further documentation see the manual that came with Quicksolve";
+	"Reads list of integrals from stdin and produces FORM fill statements for those integrals in terms of master integrals to stdout. All occurring symbols from the identity databases must be registered as positional arguments and can optionally be chosen to be replaced.\n"
+	"For further documentation see the manual that came with Quicksolve";
 
 volatile sig_atomic_t terminate = false;
 
@@ -71,16 +72,19 @@ int main( const int argc,char* const argv[ ] ) {
 
 	QsEvaluatorOptions fermat_options = qs_evaluator_options_new( );
 
+	QsIntegralMgr mgr = qs_integral_mgr_new_with_size( "idPR",".dat#type=kch","PR",".dat#type=kch",prealloc );
+
 	int j;
 	for( j = optind; j<argc; j++ ) {
 		char* symbol = strtok( argv[ j ],"=" );
 		char* value = strtok( NULL,"" );
 
-		qs_evaluator_options_add( fermat_options,symbol,value );
+		qs_evaluator_options_add( fermat_options,symbol );
+		if( value )
+			qs_integral_mgr_add_substitution( mgr,symbol,value );
 	}
 
 
-	QsIntegralMgr mgr = qs_integral_mgr_new_with_size( "idPR",".dat#type=kch","PR",".dat#type=kch",prealloc );
 	QsAEF aef = qs_aef_new( );
 	QsPivotGraph p = qs_pivot_graph_new_with_size( aef,mgr,(QsLoadFunction)qs_integral_mgr_load_expression,mgr,(QsSaveFunction)qs_integral_mgr_save_expression,prealloc,usage_limit );
 

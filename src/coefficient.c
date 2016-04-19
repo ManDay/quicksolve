@@ -5,7 +5,6 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <signal.h>
-#include <poll.h>
 #include <sys/time.h>
 #include <stdarg.h>
 #include <assert.h>
@@ -22,14 +21,9 @@ struct QsEvaluator {
 	QsCompoundDiscoverer discover;
 };
 
-struct Symbol {
-	char* name;
-	char* value;
-};
-
 struct QsEvaluatorOptions {
 	unsigned n_symbols;
-	struct Symbol* symbols;
+	char** symbols;
 };
 
 QsEvaluatorOptions qs_evaluator_options_new( ) {
@@ -40,32 +34,18 @@ QsEvaluatorOptions qs_evaluator_options_new( ) {
 }
 	
 void qs_evaluator_options_add( QsEvaluatorOptions o,const char* first, ... ) {
-	va_list va;
-	va_start( va,first );
-
 	const char* name = first;
-	const char* value = va_arg( va,char* );
 
-	va_end( va );
-
-	o->symbols = realloc( o->symbols,( o->n_symbols + 1 )*sizeof (struct Symbol) );
-	o->symbols[ o->n_symbols ].name = strdup( name );
-
-	if( value )
-		o->symbols[ o->n_symbols ].value = strdup( value );
-	else
-		o->symbols[ o->n_symbols ].value = NULL;
+	o->symbols = realloc( o->symbols,( o->n_symbols + 1 )*sizeof (char*) );
+	o->symbols[ o->n_symbols ] = strdup( name );
 
 	o->n_symbols++;
 }
 
 void qs_evaluator_options_destroy( QsEvaluatorOptions o ) {
 	int j;
-	for( j = 0; j<o->n_symbols; j++ ) {
-		free( o->symbols[ j ].name );
-		if( o->symbols[ j ].value )
-			free( o->symbols[ j ].value);
-	}
+	for( j = 0; j<o->n_symbols; j++ )
+		free( o->symbols[ j ] );
 
 	free( o->symbols );
 	free( o );
@@ -106,18 +86,11 @@ static void fermat_submit( QsEvaluator e,const char* data ) {
 	fputs( data,e->out );
 }
 
-static void fermat_clear( QsEvaluator e ) {
-	char wastebin[ 256 ];
-	struct pollfd pf = { e->in_fd,POLLIN };
-	while( poll( &pf,1,0 )!=(-1) && pf.revents&POLLIN )
-		read( e->in_fd,wastebin,256 );
-}
-
-static void register_symbols( QsEvaluator e,unsigned n_symbols,struct Symbol symbols[ ] ) {
+static void register_symbols( QsEvaluator e,unsigned n_symbols,char* symbols[ ] ) {
 	int j;
 	for( j = 0; j<n_symbols; j++ ) {
 		fermat_submit( e,"&(J=" );
-		fermat_submit( e,symbols[ j ].name );
+		fermat_submit( e,symbols[ j ] );
 		fermat_submit( e,")\n" );
 	}
 
@@ -273,3 +246,29 @@ bool qs_coefficient_is_zero( const QsCoefficient c ) {
 void qs_coefficient_destroy( QsCoefficient c ) {
 	free( c );
 }
+
+static void replace_first( char* base,size_t offset,const char* pattern,const char *replacement,size_t base_len,size_t pattern_len,size_t replacement_len ) {
+	char* location = strstr( base + offset,pattern );
+
+	if( location ) {
+		size_t first = location - base;
+
+		if( pattern_len<replacement_len )
+			base = realloc( base,base_len + replacement_len - pattern_len );
+
+		memmove( base + first + replacement_len,base + first + pattern_len,base_len - first - pattern_len );
+		memcpy( base + first,replacement,replacement_len );
+		base_len += replacement_len - pattern_len;
+		base[ base_len ]= '\0';
+
+		replace_first( base,first + replacement_len,pattern,replacement,base_len,pattern_len,replacement_len );
+	}
+	
+}
+
+void qs_coefficient_substitute( QsCoefficient c,const char* pattern,const char* replacement ) {
+	char* replacer = malloc( strlen( replacement )+ 3 );
+	sprintf( replacer,"(%s)",replacement );
+	replace_first( c,0,pattern,replacer,strlen( c ),strlen( pattern ),strlen( replacement ) );
+	free( replacer );
+}	

@@ -20,6 +20,11 @@ struct Databases {
 	QsDb readwrite;
 };
 
+struct Substitution {
+	char* name;
+	char* value;
+};
+
 struct QsIntegralMgr {
 	unsigned n_integrals;
 	unsigned allocated;
@@ -33,6 +38,9 @@ struct QsIntegralMgr {
 
 	unsigned n_dbs;
 	struct Databases** dbs;
+
+	unsigned n_substitutions;
+	struct Substitution* substitutions;
 };
 
 static struct Databases open_db( QsIntegralMgr m,QsPrototype p,bool create_rw ) {
@@ -62,6 +70,11 @@ static struct Databases open_db( QsIntegralMgr m,QsPrototype p,bool create_rw ) 
 	}
 
 	return *( m->dbs[ p ] );
+}
+
+void qs_integral_mgr_add_substitution( QsIntegralMgr m,char* symbol,char* value ) {
+	m->substitutions = realloc( m->substitutions,++( m->n_substitutions )*sizeof (struct Substitution) );
+	m->substitutions[ m->n_substitutions - 1 ]= (struct Substitution){ strdup( symbol ),strdup( value ) };
 }
 
 /** Load and save
@@ -216,6 +229,10 @@ struct QsReflist qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,
 		QsIntegral integral = qs_expression_integral( e,j );
 		QsCoefficient coefficient = qs_expression_coefficient( e,j );
 
+		int k;
+		for( k = 0; k<m->n_substitutions; k++ )
+			qs_coefficient_substitute( coefficient,m->substitutions[ k ].name,m->substitutions[ k ].value );
+
 		result.references[ j ].coefficient = coefficient;
 		result.references[ j ].head = qs_integral_mgr_manage( m,integral );
 	}
@@ -255,6 +272,9 @@ QsIntegralMgr qs_integral_mgr_new_with_size( const char* ro_prefix,const char* r
 
 	result->n_dbs = 0;
 	result->dbs = malloc( 0 );
+
+	result->n_substitutions = 0;
+	result->substitutions = malloc( 0 );
 
 	return result;
 }
@@ -307,6 +327,12 @@ void qs_integral_mgr_destroy( QsIntegralMgr m ) {
 		}
 	}
 
+	for( j = 0; j<m->n_substitutions; j++ ) {
+		free( m->substitutions[ j ].name );
+		free( m->substitutions[ j ].value );
+	}
+
+	free( m->substitutions );
 	free( m->integrals );
 	free( m->ro_prefix );
 	free( m->ro_suffix );
