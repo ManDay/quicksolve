@@ -47,6 +47,11 @@ unsigned qs_expression_to_binary( QsExpression e,char** result ) {
 	unsigned size = 0;
 	unsigned allocated;
 	char* content;
+
+	if( !e->n_terms ) {
+		*result = malloc( 0 );
+		return 0;
+	}
 	
 	int j;
 	for( j = 0; j<e->n_terms; j++ ) {

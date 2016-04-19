@@ -136,11 +136,12 @@ void qs_integral_mgr_add_substitution( QsIntegralMgr m,char* symbol,char* value 
  */
 
 void qs_integral_mgr_save_expression( QsIntegralMgr m,QsComponent i,struct QsReflist l,struct QsMetadata meta ) {
-	QsExpression e = qs_expression_new_with_size( l.n_references );
+	QsExpression e = qs_expression_new_with_size( meta.solved?l.n_references - 1:l.n_references );
 
 	int j;
 	for( j = 0; j<l.n_references; j++ )
-		qs_expression_add( e,l.references[ j ].coefficient,qs_integral_mgr_peek( m,l.references[ j ].head ) );
+		if( !meta.solved || l.references[ j ].head!=i )
+			qs_expression_add( e,l.references[ j ].coefficient,qs_integral_mgr_peek( m,l.references[ j ].head ) );
 
 	QsIntegral in = qs_integral_mgr_peek( m,i );
 
@@ -151,10 +152,15 @@ void qs_integral_mgr_save_expression( QsIntegralMgr m,QsComponent i,struct QsRef
 	entry->key = malloc( entry->keylen );
 	memcpy( entry->key,qs_integral_powers( in ),entry->keylen );
 	unsigned expression_size = qs_expression_to_binary( e,&entry->val );
-	entry->vallen = expression_size + QS_METADATA_SIZE;
-	entry->val = realloc( entry->val,entry->vallen );
-	*( (int*)( entry->val + expression_size ) )= meta.order;
-	*( (char*)( entry->val + expression_size + sizeof (int) ) )= meta.solved?1:0;
+
+	if( meta.solved )
+		entry->vallen = expression_size;
+	else {
+		entry->vallen = expression_size + QS_METADATA_SIZE;
+		entry->val = realloc( entry->val,entry->vallen );
+		*( (int*)( entry->val + expression_size ) )= meta.order;
+		*( (char*)( entry->val + expression_size + sizeof (int) ) )= meta.solved?1:0;
+	}
 
 	qs_db_set( dbs.readwrite,entry );
 
