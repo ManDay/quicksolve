@@ -2,9 +2,11 @@
 #define _QS_METADATA_H_
 
 #include <stdbool.h>
+#include <limits.h>
 
 #define QS_METADATA_SIZE 2*sizeof (int) - 1
-#define QS_DESPAIR short
+#define QS_DESPAIR unsigned short
+#define QS_MAX_DESPAIR USHRT_MAX
 
 struct QsMetadata {
 	unsigned order; ///< Order of pivot
