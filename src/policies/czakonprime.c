@@ -25,14 +25,14 @@
  * - Attempt further eliminations on problematic pivot.
  */
 
-static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned rc,volatile sig_atomic_t* const terminate  ) {
+static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsigned rc,volatile sig_atomic_t* const terminate  ) {
 	Pivot* target = load_pivot( g,i );
 
 	if( !target )
 		return;
 
 	const unsigned order = target->meta.order;
-	target->meta.solving = true;
+	target->meta.consideration++;
 
 	Pivot* next_target = NULL;
 	QsComponent next_i = 0;
@@ -50,7 +50,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 		if( load_pivot( g,target->refs[ j ].head ) ) {
 			Pivot* candidate = g->components[ target->refs[ j ].head ];
 
-			const bool suitable = target->refs[ j ].head!=i &&( full_back ||( ( candidate->meta.solved || candidate->meta.order<order )&& !candidate->meta.solving ) );
+			const bool suitable = target->refs[ j ].head!=i &&( ( candidate->meta.solved || candidate->meta.order<order )||( despair &&( despair>candidate->meta.consideration ) ) );
 	
 			if( suitable ) {
 				QsTerminal wait;
@@ -87,7 +87,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 		target->meta.solved = false;
 
 		DBG_PRINT( "Eliminating %i from %i {\n",rc,next_target->meta.order,order );
-		czakon_prime( g,next_i,false,rc + 1,terminate );
+		czakon_prime( g,next_i,0,rc + 1,terminate );
 
 		if( *terminate ) {
 			DBG_PRINT( "}\n",rc );
@@ -108,11 +108,10 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 
 		DBG_PRINT( "}\n",rc );
 
-		czakon_prime( g,i,full_back,rc,terminate );
+		czakon_prime( g,i,despair,rc,terminate );
 	} else {
 		/* If we ended up here because of back-substitution, solving is true
 		 * but if we haven't made any changes, solved is still true */
-		target->meta.solving = false;
 		if( !target->meta.solved ) {
 			if( self_found ) {
 				QsTerminal wait;
@@ -122,6 +121,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 					qs_pivot_graph_normalize( g,i );
 
 					target->meta.solved = true;
+					target->meta.consideration--;
 
 					DBG_PRINT( "Normalized %i for substitution\n",rc,order );
 					return;
@@ -130,7 +130,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 
 			DBG_PRINT( "Normalization of %i failed, forcing full solution {\n",rc,order );
 			fprintf( stderr,"Warning: Canonical elimination in %i not normalizable (Recursion depth %i)\n",order,rc );
-			czakon_prime( g,i,true,rc + 1,terminate );
+			czakon_prime( g,i,despair + 1,rc + 1,terminate );
 			DBG_PRINT( "}\n",rc );
 		}
 	}
@@ -141,7 +141,7 @@ void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,volatile sig_atomic_t* c
 		return;
 
 	DBG_PRINT( "Solving for Pivot %i {\n",0,g->components[ i ]->meta.order );
-	czakon_prime( g,i,true,1,terminate );
+	czakon_prime( g,i,1,1,terminate );
 	DBG_PRINT( "}\n",0 );
 
 	// Reassert i is inside of USAGE_MARGIN

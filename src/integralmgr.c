@@ -201,15 +201,12 @@ struct QsReflist qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,
 			sub_self = true;
 		}
 
-		meta->solving = false;
-
 		qs_db_entry_destroy( data );
 	} else if( dbs.read &&( data = qs_db_get( dbs.read,(char*)pwrs,keylen ) ) ) {
 		/* Obtain identity from identity database */
 		e = qs_expression_new_from_binary( data->val,data->vallen,NULL );
 		meta->order = *( (int*)( data->val + data->vallen - sizeof (int) ) );
 		meta->solved = false;
-		meta->solving = false;
 
 		if( e )
 			if( qs_expression_n_terms( e )==1 && qs_coefficient_is_one( qs_expression_coefficient( e,0 ) ) )
@@ -220,6 +217,8 @@ struct QsReflist qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,
 		m->integrals[ i ].master = true;
 		return result;
 	}
+
+	meta->consideration = 0;
 
 	unsigned n = qs_expression_n_terms( e );
 
