@@ -218,6 +218,9 @@ struct QsReflist qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,
 		return result;
 	}
 
+	/* TODO: Discarding the number of considerations on write back
+	 * operations for memory reduction has side effects when we are in a
+	 * desperate back substitutions. */
 	meta->consideration = 0;
 
 	unsigned n = qs_expression_n_terms( e );
@@ -247,12 +250,6 @@ struct QsReflist qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,
 	if( n==0 || sub_self ) {
 		result.references[ j ].coefficient = qs_coefficient_one( true );
 		result.references[ j ].head = i;
-		if( n==0 ) {
-			char* str;
-			qs_integral_print( m->integrals[ i ].integral,&str );
-			fprintf( stderr,"Warning: Database empty expression for %s\n",str );
-			free( str );
-		}
 	}
 	
 	return result;
