@@ -228,7 +228,8 @@ Pivot* load_pivot( QsPivotGraph g,QsComponent i ) {
  * Relays one edge tail-to-head under the assumption that the head is a
  * normalized pivot. The resulting coefficients on the new terms are not
  * baked. The base coefficient is used in multiple multiplications, it
- * must and will be baked!
+ * must and will be baked. The coefficients on the head are also
+ * terminated, since they are not discarded.
  *
  * @param This
  *
@@ -238,7 +239,7 @@ Pivot* load_pivot( QsPivotGraph g,QsComponent i ) {
  *
  * @return Whether a matching edge was found and relayed
  */
-bool qs_pivot_graph_relay( QsPivotGraph g,QsComponent tail,QsComponent head,bool bake ) {
+bool qs_pivot_graph_relay( QsPivotGraph g,QsComponent tail,QsComponent head ) {
 	Pivot* tail_pivot = g->components[ tail ];
 	Pivot* head_pivot = g->components[ head ];
 
@@ -255,13 +256,11 @@ bool qs_pivot_graph_relay( QsPivotGraph g,QsComponent tail,QsComponent head,bool
 			for( k = 0; k<head_pivot->n_refs; k++ ) {
 				QsComponent limb_head = head_pivot->refs[ k ].head;
 				if( limb_head!=head ) {
-					QsOperand limb_coefficient = head_pivot->refs[ k ].coefficient;
+					QsOperand limb_coefficient = (QsOperand)qs_operand_terminate( head_pivot->refs[ k ].coefficient,g->aef );
+					head_pivot->refs[ k ].coefficient = limb_coefficient;
 					
 					tail_pivot->refs[ tail_pivot->n_refs - 1 + j_prime ].head = limb_head;
-					if( bake )
-						tail_pivot->refs[ tail_pivot->n_refs - 1 + j_prime ].coefficient = (QsOperand)qs_operand_bake( 2,(QsOperand[ ]){ limb_coefficient,base },g->aef,QS_OPERATION_MUL );
-					else
-						tail_pivot->refs[ tail_pivot->n_refs - 1 + j_prime ].coefficient = (QsOperand)qs_operand_link( 2,(QsOperand[ ]){ limb_coefficient,base },QS_OPERATION_MUL );
+					tail_pivot->refs[ tail_pivot->n_refs - 1 + j_prime ].coefficient = (QsOperand)qs_operand_link( 2,(QsOperand[ ]){ limb_coefficient,base },QS_OPERATION_MUL );
 
 					j_prime++;
 				}
@@ -287,20 +286,16 @@ bool qs_pivot_graph_relay( QsPivotGraph g,QsComponent tail,QsComponent head,bool
  * @param The tail pivot
  *
  * @param The head component
- * 
- * @param Whether to bake the resulting edge
  *
- * @return When baked, will return the QsTerminal of the edge or NULL if
- * no edge was found
+ * @return The Operand of the edge or NULL if no edge was found
  */
-QsTerminal qs_pivot_graph_collect( QsPivotGraph g,QsComponent tail,QsComponent head,bool bake ) {
+QsOperand qs_pivot_graph_collect( QsPivotGraph g,QsComponent tail,QsComponent head ) {
 	Pivot* tail_pivot = g->components[ tail ];
 
 	unsigned allocated = COLLECT_PREALLOC;
 	unsigned n_operands = 0;
 	QsOperand* operands = malloc( allocated*sizeof (QsOperand) );
 	QsOperand* first = NULL;
-	QsTerminal result = NULL;
 
 	int j = 0;
 	while( j<tail_pivot->n_refs ) {
@@ -322,21 +317,17 @@ QsTerminal qs_pivot_graph_collect( QsPivotGraph g,QsComponent tail,QsComponent h
 	}
 
 	if( n_operands>1 ) {
-		if( bake )
-			*first = (QsOperand)( result = qs_operand_bake( n_operands,operands,g->aef,QS_OPERATION_ADD ) );
-		else
-			*first = (QsOperand)qs_operand_link( n_operands,operands,QS_OPERATION_ADD );
+		*first = (QsOperand)qs_operand_link( n_operands,operands,QS_OPERATION_ADD );
 
 		for( j = 0; j<n_operands; j++ )
 			qs_operand_unref( operands[ j ] );
 
 		tail_pivot->refs = realloc( tail_pivot->refs,tail_pivot->n_refs*sizeof (struct Reference) );
-	} else if( bake && first )
-		*first = (QsOperand)( result = qs_operand_terminate( *first,g->aef ) );
+	}
 
 	free( operands );
 
-	return result;
+	return *first;
 }
 
 /** Normalizes pivotal coefficient
@@ -350,10 +341,8 @@ QsTerminal qs_pivot_graph_collect( QsPivotGraph g,QsComponent tail,QsComponent h
  * @param This
  *
  * @param The target pivot
- *
- * @param Whether to bake the calculation
  */
-void qs_pivot_graph_normalize( QsPivotGraph g,QsComponent target,bool bake ) {
+void qs_pivot_graph_normalize( QsPivotGraph g,QsComponent target ) {
 	Pivot* target_pivot = g->components[ target ];
 
 	/* If there is only one coefficient, its value is actually irrelevant
@@ -362,11 +351,8 @@ void qs_pivot_graph_normalize( QsPivotGraph g,QsComponent target,bool bake ) {
 	 * not unref the value here but simply leave it unchanged (it will not
 	 * be used in further evaluations anyway because relaying kills the
 	 * associated term). */
-	if( target_pivot->n_refs==1 ) {
-		if( bake )
-			target_pivot->refs[ 0 ].coefficient = (QsOperand)qs_operand_terminate( target_pivot->refs[ 0 ].coefficient,g->aef );
+	if( target_pivot->n_refs==1 )
 		return;
-	}
 
 	int j;
 	for( j = 0; j<target_pivot->n_refs; j++ )
@@ -381,11 +367,7 @@ void qs_pivot_graph_normalize( QsPivotGraph g,QsComponent target,bool bake ) {
 					QsOperand neg = (QsOperand)qs_operand_link( 1,&target_pivot->refs[ k ].coefficient,QS_OPERATION_SUB );
 					qs_operand_unref( target_pivot->refs[ k ].coefficient );
 
-					QsOperand new;
-					if( bake )
-						new = (QsOperand)qs_operand_bake( 2,(QsOperand[ ]){ neg,self },g->aef,QS_OPERATION_DIV );
-					else
-						new = (QsOperand)qs_operand_link( 2,(QsOperand[ ]){ neg,self },QS_OPERATION_DIV );
+					QsOperand new = (QsOperand)qs_operand_link( 2,(QsOperand[ ]){ neg,self },QS_OPERATION_DIV );
 
 					qs_operand_unref( neg );
 

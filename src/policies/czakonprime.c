@@ -101,10 +101,10 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 
 		/* We bake neither the relay nor the collect, because we will
 		 * eventually bake the current pivot on normalize. */
-		qs_pivot_graph_relay( g,i,next_i,false );
+		qs_pivot_graph_relay( g,i,next_i );
 
 		for( j = 0; j<target->n_refs; j++ )
-			qs_pivot_graph_collect( g,i,target->refs[ j ].head,false );
+			qs_pivot_graph_collect( g,i,target->refs[ j ].head );
 
 		DBG_PRINT( "}\n",rc );
 
@@ -119,7 +119,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,bool full_back,unsigned r
 				target->refs[ j_self ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j_self ].coefficient,g->aef ) );
 
 				if( !qs_coefficient_is_zero( qs_terminal_wait( wait ) ) ) {
-					qs_pivot_graph_normalize( g,i,true );
+					qs_pivot_graph_normalize( g,i );
 
 					target->meta.solved = true;
 
