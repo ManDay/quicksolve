@@ -18,7 +18,7 @@
 #define STR( X ) #X
 #define XSTR( X ) STR( X )
 
-const char const usage[ ]= "[-p <Threads>] [-a <Identity limit>] [-w <Usage limit>] [-i <In file>] [-o <Out file>] [<Symbol>[=<Subsitution>] ...]\n\n"
+const char const usage[ ]= "[-p <Threads>] [-a <Identity limit>] [-w <Usage limit>] [<Symbol>[=<Subsitution>] ...]\n\n"
 	"<Threads>: Number of evaluators in parallel calculation [Default " XSTR( DEF_NUM_PROCESSORS ) "]\n"
 	"<Identity limit>: Upper bound on the number of identities in the system [Default " XSTR( DEF_PREALLOC ) "]\n"
 	"<Usage limit>: Maximum number of identities to keep in memory or 0 if unlimited [Default " XSTR( DEF_USAGE_LIMIT ) "]\n\n"
