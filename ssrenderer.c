@@ -171,12 +171,11 @@ int main( const int argc,char* const argv[ ] ) {
 								int column_order;
 
 								if( !order_map.columns[ id ].loaded ) {
-									unsigned order_test;
 									struct QsMetadata meta;
 									struct QsReflist l = qs_integral_mgr_load_expression( m,id,&meta );
 
 									if( l.n_references ) {
-										column_order = order_test;
+										column_order = meta.order;
 										order_map.columns[ id ].order = column_order;
 
 										int j;
