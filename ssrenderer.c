@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <cairo.h>
 
+#include "src/metadata.h"
 #include "src/expression.h"
 #include "src/db.h"
 #include "src/integralmgr.h"
@@ -59,7 +60,7 @@ int main( const int argc,char* const argv[ ] ) {
 	order_map.n_columns = 0;
 
 	int opt;
-	while( ( opt = getopt( argc,argv,"c:r:w:h:o:s:a:m:i" ) )!=-1 ) {
+	while( ( opt = getopt( argc,argv,"c:s:r:w:h:o:a:m:i" ) )!=-1 ) {
 		switch( opt ) {
 		case 'o':
 			outfilename = optarg;
@@ -115,7 +116,7 @@ int main( const int argc,char* const argv[ ] ) {
 	for( j = 0; j<masters_allocated; j++ )
 		masters[ j ]= calloc( height,sizeof (struct MasterSector) );
 
-	QsIntegralMgr m = qs_integral_mgr_new( "idPR",".dat#type=kch","","" );
+	QsIntegralMgr m = qs_integral_mgr_new_with_size( "idPR",".dat#type=kch","PR",".dat#type=kch",order_map.allocated );
 
 	for( j = optind; j<argc; j++ ) {
 
@@ -137,7 +138,7 @@ int main( const int argc,char* const argv[ ] ) {
 			struct QsDbEntry* row;
 			while( ( row = qs_db_cursor_next( cur ) ) ) {
 				if( memcmp( row->key,"generated",row->keylen )&& memcmp( row->key,"setup",row->keylen ) ) {
-					QsExpression e = qs_expression_new_from_binary( row->val,row->vallen - sizeof (int) );
+					QsExpression e = qs_expression_new_from_binary( row->val,row->vallen - sizeof (int),NULL );
 					unsigned order = *( (int*)( row->val +( row->vallen - sizeof (int) ) ) );
 
 					if( order<stat_min || stat_max==0 )
@@ -171,13 +172,18 @@ int main( const int argc,char* const argv[ ] ) {
 
 								if( !order_map.columns[ id ].loaded ) {
 									unsigned order_test;
-									QsExpression e2 = qs_integral_mgr_load_expression( m,id,&order_test );
+									struct QsMetadata meta;
+									struct QsReflist l = qs_integral_mgr_load_expression( m,id,&meta );
 
-									if( e2 ) {
+									if( l.n_references ) {
 										column_order = order_test;
 										order_map.columns[ id ].order = column_order;
 
-										qs_expression_destroy( e2 );
+										int j;
+										for( j = 0; j<l.n_references; j++ )
+											qs_coefficient_destroy( l.references[ j ].coefficient );
+
+										free( l.references );
 									} else {
 										column_order = -( ++n_masters );
 										order_map.columns[ id ].order = column_order;
