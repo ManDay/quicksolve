@@ -316,8 +316,10 @@ QsOperand qs_pivot_graph_collect( QsPivotGraph g,QsComponent tail,QsComponent he
 			j++;
 	}
 
+	QsOperand result = NULL;
+
 	if( n_operands>1 ) {
-		*first = (QsOperand)qs_operand_link( n_operands,operands,QS_OPERATION_ADD );
+		result = *first = (QsOperand)qs_operand_link( n_operands,operands,QS_OPERATION_ADD );
 
 		for( j = 0; j<n_operands; j++ )
 			qs_operand_unref( operands[ j ] );
@@ -327,7 +329,7 @@ QsOperand qs_pivot_graph_collect( QsPivotGraph g,QsComponent tail,QsComponent he
 
 	free( operands );
 
-	return *first;
+	return result;
 }
 
 /** Normalizes pivotal coefficient

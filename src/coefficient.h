@@ -11,7 +11,7 @@ typedef enum {
 } QsOperation;
 
 typedef void* QsCompound;
-typedef char* QsCoefficient;
+typedef struct QsCoefficient* QsCoefficient;
 typedef struct QsEvaluator* QsEvaluator;
 typedef struct QsEvaluatorOptions* QsEvaluatorOptions;
 

@@ -11,6 +11,10 @@
 
 #include "coefficient.h"
 
+struct QsCoefficient {
+	char* text;
+};
+
 struct QsEvaluator {
 	FILE* out;
 	FILE* in;
@@ -186,7 +190,7 @@ static void submit_compound( QsEvaluator e,QsCompound x,QsOperation op ) {
 			submit_compound( e,child_raw,child_op );
 		} else {
 			QsCoefficient child = (QsCoefficient)child_raw;
-			fermat_submit( e,child );
+			fermat_submit( e,child->text );
 		}
 
 		if( parens )
@@ -195,14 +199,14 @@ static void submit_compound( QsEvaluator e,QsCompound x,QsOperation op ) {
 }
 
 QsCoefficient qs_coefficient_one( bool minus ) {
-	return minus?strdup( "-1" ):strdup( "1" );
+	return qs_coefficient_new_from_binary( minus?"-1":"1",minus?2:1 );
 }
 
 QsCoefficient qs_evaluator_evaluate( QsEvaluator e,QsCompound x,QsOperation op ) {
-	QsCoefficient result;
+	QsCoefficient result = malloc( sizeof (struct QsCoefficient) );
 
 	submit_compound( e,x,op );
-	fermat_sync( e,&result );
+	fermat_sync( e,&result->text );
 
 	return result;
 }
@@ -215,60 +219,64 @@ void qs_evaluator_destroy( QsEvaluator e ) {
 }
 
 QsCoefficient qs_coefficient_new_from_binary( const char* data,unsigned size ) {
-	QsCoefficient result = malloc( size+1 );
-	memcpy( result,data,size );
-	result[ size ]= '\0';
+	QsCoefficient result = malloc( sizeof (QsCoefficient) );
+	result->text = malloc( size+1 );
+	memcpy( result->text,data,size );
+	result->text[ size ]= '\0';
 
 	return result;
 }
 
 unsigned qs_coefficient_to_binary( QsCoefficient c,char** out ) {
-	unsigned len = strlen( c );
+	unsigned len = strlen( c->text );
 	
 	*out = malloc( len );
-	memcpy( *out,c,len );
+	memcpy( *out,c->text,len );
 	return len;
 }
 
 unsigned qs_coefficient_print( const QsCoefficient c,char** b ) {
-	*b = strdup( c );
-	return strlen( c );
+	*b = strdup( c->text );
+	return strlen( c->text );
 }
 
 bool qs_coefficient_is_one( const QsCoefficient c ) {
-	return !strcmp( c,"1" );
+	return !strcmp( c->text,"1" );
 }
 
 bool qs_coefficient_is_zero( const QsCoefficient c ) {
-	return !strcmp( c,"0" );
+	return !strcmp( c->text,"0" );
 }
 
 void qs_coefficient_destroy( QsCoefficient c ) {
+	free( c->text );
 	free( c );
 }
 
-static void replace_first( char* base,size_t offset,const char* pattern,const char *replacement,size_t base_len,size_t pattern_len,size_t replacement_len ) {
+static char* replace_first( char* base,size_t offset,const char* pattern,const char *replacement,size_t base_len,size_t pattern_len,size_t replacement_len ) {
 	char* location = strstr( base + offset,pattern );
 
 	if( location ) {
 		size_t first = location - base;
 
 		if( pattern_len<replacement_len )
-			base = realloc( base,base_len + replacement_len - pattern_len );
+			base = realloc( base,base_len + replacement_len - pattern_len + 1 );
 
 		memmove( base + first + replacement_len,base + first + pattern_len,base_len - first - pattern_len );
 		memcpy( base + first,replacement,replacement_len );
-		base_len += replacement_len - pattern_len;
+		base_len =( base_len + replacement_len )- pattern_len;
 		base[ base_len ]= '\0';
 
-		replace_first( base,first + replacement_len,pattern,replacement,base_len,pattern_len,replacement_len );
+		base = replace_first( base,first + replacement_len,pattern,replacement,base_len,pattern_len,replacement_len );
 	}
-	
+
+	return base;
 }
 
 void qs_coefficient_substitute( QsCoefficient c,const char* pattern,const char* replacement ) {
 	char* replacer = malloc( strlen( replacement )+ 3 );
+
 	sprintf( replacer,"(%s)",replacement );
-	replace_first( c,0,pattern,replacer,strlen( c ),strlen( pattern ),strlen( replacement ) );
+	c->text = replace_first( c->text,0,pattern,replacer,strlen( c->text ),strlen( pattern ),strlen( replacer ) );
 	free( replacer );
 }	
