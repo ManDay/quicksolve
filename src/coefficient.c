@@ -24,7 +24,7 @@ struct QsEvaluator {
 
 	QsCompoundDiscoverer discover;
 
-#if DBG_LEVEL>2
+#ifdef DBG_EVALFILE
 	FILE* fermat_log;
 #endif
 };
@@ -68,7 +68,7 @@ static ssize_t fermat_sync( QsEvaluator e,char** out ) {
 	ssize_t len = getdelim( &result,&read,';',e->in );
 
 	const bool fermat_no_error = !( strstr( result,"Error" )|| strstr( result,"error" )|| strstr( result,"ERROR" )|| strstr( result,"***" ) );
-#if DBG_LEVEL>2
+#ifdef DBG_EVALFILE
 	fputs( "\nSYNC OUTPUT: ",e->fermat_log );
 	fputs( result,e->fermat_log );
 	fputs( "\n",e->fermat_log );
@@ -77,6 +77,7 @@ static ssize_t fermat_sync( QsEvaluator e,char** out ) {
 		fprintf( stderr,"Error: Error in result of FERMAT PID '%i'\n",e->cas );
 		fputs( "Terminated\n",e->fermat_log );
 		fclose( e->fermat_log );
+		abort( );
 	}
 #endif
 	assert( fermat_no_error );
@@ -103,7 +104,7 @@ static ssize_t fermat_sync( QsEvaluator e,char** out ) {
 }
 
 static void fermat_submit( QsEvaluator e,const char* data ) {
-#if DBG_LEVEL>2
+#ifdef DBG_EVALFILE
 	fputs( data,e->fermat_log );
 #endif
 	fputs( data,e->out );
@@ -146,9 +147,9 @@ QsEvaluator qs_evaluator_new( QsCompoundDiscoverer discover,QsEvaluatorOptions o
 		result->out = fdopen( out_pipe[ 1 ],"w" );
 		//setbuf( result->out,NULL );
 
-#if DBG_LEVEL>2
+#ifdef DBG_EVALFILE
 		char* logname;
-		asprintf( &logname,DBG_EVAL "%i",result->cas );
+		asprintf( &logname,DBG_EVALFILE "%i",result->cas );
 		if( !( result->fermat_log = fopen( logname,"w" ) ) ) {
 			fprintf( stderr,"Error: Could not open logfile '%s' for writing\n",logname );
 			abort( );
