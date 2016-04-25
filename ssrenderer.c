@@ -228,7 +228,7 @@ int main( const int argc,char* const argv[ ] ) {
 			qs_db_cursor_destroy( cur );
 			qs_db_destroy( db );
 		} else {
-			DBG_PRINT( "Could not load database",0 );
+			fprintf( stderr,"Error: Could not load database\n" );
 			exit( EXIT_FAILURE );
 		}
 	}
@@ -236,7 +236,7 @@ int main( const int argc,char* const argv[ ] ) {
 	qs_integral_mgr_destroy( m );
 	
 	DBG_PRINT( "Finished collecting all rows in range [%i,%i]\n",0,stat_min,stat_max );
-	DBG_PRINT( "Rendering result with %i components (%i masters) to file\n",0,order_map.n_columns,n_masters );
+	printf( "Rendering result with %i components (%i masters) to file\n",order_map.n_columns,n_masters );
 	/* Image format
 	 *
 	 *             width+2 width+4

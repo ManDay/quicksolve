@@ -426,6 +426,7 @@ void qs_pivot_graph_save( QsPivotGraph g,QsComponent i ) {
 
 void qs_pivot_graph_destroy( QsPivotGraph g ) {
 
+	/* TODO: Issue termination for everything then wait for everything */
 	int j;
 	for( j = 0; j<g->n_components; j++ )
 		if( g->components[ j ] ) {

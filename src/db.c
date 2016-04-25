@@ -121,8 +121,8 @@ QsDb qs_db_new( char* pathname,enum QsDbMode mode ) {
 	return NULL;
 }
 
+/* TODO: Make cursors work with tracked DBs */
 QsDbCursor qs_db_cursor_new( QsDb db ) {
-	assert( false ); // Cursors have not yet been made work with the tracked_dbs
 	QsDbCursor result = malloc( sizeof (struct QsDbCursor) );
 	result->db = db;
 	result->cur = kcdbcursor( db->db );
@@ -132,14 +132,12 @@ QsDbCursor qs_db_cursor_new( QsDb db ) {
 }
 
 QsDbCursor qs_db_cursor_reset( QsDbCursor cur ) {
-	assert( false ); // Cursors have not yet been made work with the tracked_dbs
 	kccurjump( cur->cur );
 
 	return cur;
 }
 
 struct QsDbEntry* qs_db_cursor_next( QsDbCursor cur ) {
-	assert( false ); // Cursors have not yet been made work with the tracked_dbs
 	char* keydata;
 	const char* val;
 	size_t keylen,vallen;

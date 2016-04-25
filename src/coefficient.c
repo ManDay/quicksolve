@@ -23,6 +23,10 @@ struct QsEvaluator {
 	pid_t cas;
 
 	QsCompoundDiscoverer discover;
+
+#if DBG_LEVEL>2
+	FILE* fermat_log;
+#endif
 };
 
 struct QsEvaluatorOptions {
@@ -63,7 +67,19 @@ static ssize_t fermat_sync( QsEvaluator e,char** out ) {
 	char* result = NULL;
 	ssize_t len = getdelim( &result,&read,';',e->in );
 
-	assert( !( strstr( result,"Error" )|| strstr( result,"error" )|| strstr( result,"ERROR" )|| strstr( result,"***" ) ) );
+	const bool fermat_no_error = !( strstr( result,"Error" )|| strstr( result,"error" )|| strstr( result,"ERROR" )|| strstr( result,"***" ) );
+#if DBG_LEVEL>2
+	fputs( "\nSYNC OUTPUT: ",e->fermat_log );
+	fputs( result,e->fermat_log );
+	fputs( "\n",e->fermat_log );
+
+	if( !fermat_no_error ) {
+		fprintf( stderr,"Error: Error in result of FERMAT PID '%i'\n",e->cas );
+		fputs( "Terminated\n",e->fermat_log );
+		fclose( e->fermat_log );
+	}
+#endif
+	assert( fermat_no_error );
 
 	if( out ) {
 		//Remove all occurrences of "\n"," ", and ";"
@@ -87,6 +103,9 @@ static ssize_t fermat_sync( QsEvaluator e,char** out ) {
 }
 
 static void fermat_submit( QsEvaluator e,const char* data ) {
+#if DBG_LEVEL>2
+	fputs( data,e->fermat_log );
+#endif
 	fputs( data,e->out );
 }
 
@@ -126,6 +145,16 @@ QsEvaluator qs_evaluator_new( QsCompoundDiscoverer discover,QsEvaluatorOptions o
 		result->out_fd = out_pipe[ 1 ];
 		result->out = fdopen( out_pipe[ 1 ],"w" );
 		//setbuf( result->out,NULL );
+
+#if DBG_LEVEL>2
+		char* logname;
+		asprintf( &logname,DBG_EVAL "%i",result->cas );
+		if( !( result->fermat_log = fopen( logname,"w" ) ) ) {
+			fprintf( stderr,"Error: Could not open logfile '%s' for writing\n",logname );
+			abort( );
+		}
+		free( logname );
+#endif
 	} else {
 		// Remote
 		close( in_pipe[ 0 ] );
@@ -145,7 +174,7 @@ QsEvaluator qs_evaluator_new( QsCompoundDiscoverer discover,QsEvaluatorOptions o
 		setpgid( 0,getpid( ) );
 
 		if( !execlp( "fermat","fermat",NULL ) )
-			fprintf( stderr,"Could not spawn fermat instance!" );
+			fprintf( stderr,"Could not spawn fermat instance!\n" );
 	}
 
 	fermat_submit( result,"&d\n0\n&M\n\n&U\n&E\n" );
