@@ -34,37 +34,32 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 	const unsigned order = target->meta.order;
 	target->meta.consideration++;
 
-	Pivot* next_target = NULL;
-	QsComponent next_i = 0;
-
 	bool self_found = false;
 	unsigned j_self = 0;
-	int j = 0;
 
-	while( j<target->n_refs && !next_target ) {
-		if( *terminate )
-			return;
-
-		int j_next = j + 1;
-
-		if( load_pivot( g,target->refs[ j ].head ) ) {
-			Pivot* candidate = g->components[ target->refs[ j ].head ];
-
-			const bool suitable = target->refs[ j ].head!=i &&( ( candidate->meta.solved || candidate->meta.order<order )||( despair &&( despair>candidate->meta.consideration ) ) );
+	QsTerminal* candidates = malloc( target->n_refs*sizeof (QsTerminal*) );
+	unsigned* candidate_indices = malloc( target->n_refs*sizeof (unsigned) );
+	unsigned n_candidates = 0;
 	
-			if( suitable ) {
+	/* Collect all suitable coefficients into waiter-array to wait for the
+	 * first available. In the meantime, look out for self coefficient. */
+	int j;
+	for( j = 0; j<target->n_refs; j++ ) {
+		Pivot* candidate;
+		if( ( candidate = load_pivot( g,target->refs[ j ].head ) ) ) {
+			const bool suitable_besides_not_self = ( candidate->meta.solved || candidate->meta.order<order )||( despair &&( despair>candidate->meta.consideration ) );
+	
+			if( target->refs[ j ].head==i ) {
+				self_found = true;
+				j_self = j;
+			} else if( suitable_besides_not_self ) {
 				QsTerminal wait;
 				target->refs[ j ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef ) );
-				QsCoefficient val = qs_terminal_wait( wait );
 
-				if( qs_coefficient_is_zero( val ) ) {
-					qs_operand_unref( target->refs[ j ].coefficient );
-					target->refs[ j ]= target->refs[ --( target->n_refs ) ];
-					j_next = j;
-				} else {
-					next_target = g->components[ target->refs[ j ].head ];
-					next_i = target->refs[ j ].head;
-				}
+				candidates[ n_candidates ]= wait;
+				candidate_indices[ n_candidates ]= j;
+
+				n_candidates++;
 			}
 
 			/* Reassert i is inside USAGE_MARGIN. Code further down, such as
@@ -75,14 +70,37 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 			 * location in memory, i.e. target remains unchanged.*/
 			load_pivot( g,i );
 		}
-
-		if( j!=j_next && target->refs[ j ].head==i ) {
-			self_found = true;
-			j_self = j;
-		}
-		j = j_next;
 	}
 
+	/* Determine first-available non-null coefficient from waiter array */
+	unsigned next_i;
+	Pivot* next_target = NULL;
+
+	while( n_candidates && !next_target ) {
+		unsigned index;
+		QsCoefficient val = qs_terminal_wait( candidates,n_candidates,&index );
+
+		unsigned next_j = candidate_indices[ index ];
+
+		if( qs_coefficient_is_zero( val ) ) {
+
+			qs_operand_unref( target->refs[ next_j ].coefficient );
+			target->refs[ next_j ]= target->refs[ --( target->n_refs ) ];
+
+			candidates[ index ]= candidates[ n_candidates - 1 ];
+			candidate_indices[ index ]= candidate_indices[ n_candidates - 1 ];
+			
+			n_candidates--;
+		} else {
+			next_i = target->refs[ next_j ].head;
+			next_target = load_pivot( g,next_i );
+		}
+	}
+
+	free( candidates );
+	free( candidate_indices );
+
+	/* A non-null coefficient was found ready in the waiter array */
 	if( next_target ) {
 		target->meta.solved = false;
 
@@ -117,7 +135,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 				QsTerminal wait;
 				target->refs[ j_self ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j_self ].coefficient,g->aef ) );
 
-				if( !qs_coefficient_is_zero( qs_terminal_wait( wait ) ) ) {
+				if( !qs_coefficient_is_zero( qs_terminal_wait( &wait,1,NULL ) ) ) {
 					qs_pivot_graph_normalize( g,i );
 
 					target->meta.solved = true;
@@ -158,7 +176,7 @@ void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,volatile sig_atomic_t* c
 	while( j<target->n_refs ) {
 		QsTerminal wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef );
 		target->refs[ j ].coefficient = (QsOperand)wait;
-		QsCoefficient val = qs_terminal_wait( wait );
+		QsCoefficient val = qs_terminal_wait( &wait,1,NULL );
 
 		if( qs_coefficient_is_zero( val ) ) {
 			qs_operand_unref( target->refs[ j ].coefficient );

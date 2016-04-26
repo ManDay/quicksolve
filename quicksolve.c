@@ -133,7 +133,7 @@ int main( const int argc,char* const argv[ ] ) {
 					fprintf( outfile,"\n0" );
 
 				fprintf( outfile,";\n" );
-				fflush( stdout );
+				fflush( outfile );
 
 				free( result->references );
 				free( result );

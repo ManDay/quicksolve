@@ -60,15 +60,23 @@ QsIntermediate qs_operand_link( unsigned,QsOperand*,QsOperation );
 
 /** Wait for the evaluation of a QsTerminal
  *
- * Waits for completion of an evaluation of a QsTerminal and returns a
- * peek of the resulting coefficient.
+ * Waits for completion of an evaluation of a QsTerminal in the list and
+ * returns a peek of the resulting coefficient.
  *
- * @param The terminal for whose evaluation to wait
+ * @param An array of QsTerminals to wait for
+ *
+ * @param The number of elements in the array
+ *
+ * @param[out] If not NULL, contains the index of the QsTerminal which
+ * terminated the wait.
  * 
- * @return[transfer=none] A pointer to the coefficient
+ * @return[transfer=none] A pointer to the coefficient of the QsTerminal
+ * which terminated the wait.
  */
-QsCoefficient qs_terminal_wait( QsTerminal );
+QsCoefficient qs_terminal_wait( QsTerminal*,unsigned,unsigned* );
 
-unsigned qs_operand_refcount( QsOperand o );
+//unsigned qs_operand_refcount( QsOperand o );
+
+bool qs_operand_is_ready( QsOperand );
 
 #endif

@@ -179,35 +179,63 @@ void qs_aef_destroy( QsAEF a ) {
 	free( a );
 }
 
-QsCoefficient qs_terminal_wait( QsTerminal target ) {
+QsCoefficient qs_terminal_wait( QsTerminal* targets,unsigned n_targets,unsigned* index ) {
 	struct Waiter waiter ={ PTHREAD_MUTEX_INITIALIZER,PTHREAD_COND_INITIALIZER };
 
-	pthread_spin_lock( &target->lock );
+	QsTerminal result = NULL;
+	unsigned result_index;
 
-	if( !target->is_coefficient ) {
-		target->value.expression->waiter = &waiter;
+	assert( n_targets!=0 );
 
-		pthread_mutex_lock( &waiter.lock );
+	pthread_mutex_lock( &waiter.lock );
+
+	int j;
+	for( j = 0; j<n_targets; j++ ) {
+		QsTerminal target = targets[ j ];
+
+		pthread_spin_lock( &target->lock );
+
+		if( target->is_coefficient ) {
+			result = target;
+			result_index = j;
+			break;
+		} else
+			target->value.expression->waiter = &waiter;
+
 		pthread_spin_unlock( &target->lock );
+	}
 
-		bool is_unevaluated = false;
-		do {
-			pthread_cond_wait( &waiter.change,&waiter.lock );
+	while( !result ) {
+		pthread_cond_wait( &waiter.change,&waiter.lock );
+
+		int k;
+		for( k = 0; k<n_targets; k++ ) {
+			QsTerminal target = targets[ k ];
 
 			pthread_spin_lock( &target->lock );
-			is_unevaluated = !target->is_coefficient;
+			if( target->is_coefficient ) {
+				result = target;
+				result_index = k;
+			}
 			pthread_spin_unlock( &target->lock );
-		} while( is_unevaluated );
+		}
+	}
 
-		pthread_mutex_unlock( &waiter.lock );
-	} else
+	pthread_mutex_unlock( &waiter.lock );
+
+	while( j>0 ) {
+		QsTerminal target = targets[ --j ];
+
+		pthread_spin_lock( &target->lock );
+		if( !target->is_coefficient )
+			target->value.expression->waiter = NULL;
 		pthread_spin_unlock( &target->lock );
+	}
 
-	pthread_spin_lock( &target->lock );
-	assert( target->is_coefficient );
-	pthread_spin_unlock( &target->lock );
+	if( index )
+		*index = result_index;
 
-	return target->value.coefficient;
+	return result->value.coefficient;
 }
 
 static QsCompound qs_operand_discoverer( Expression e,unsigned j,bool* is_expression,QsOperation* op ) {
@@ -300,6 +328,10 @@ static void* worker( void* udata ) {
 			 * dispensed of it. */
 			pthread_spin_unlock( &target->lock );
 
+			/* First issue dependendent calculations, then deal with the
+			 * waiter, because dealing with the waiter may block (shortly)
+			 * when the waiting thread holds the lock to do things with other
+			 * waited-for operands. */
 			int j;
 			for( j = 0; j<src->n_baked_deps; j++ ) {
 				QsTerminal depender = src->baked_deps[ j ];

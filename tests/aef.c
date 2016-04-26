@@ -165,7 +165,7 @@ int main( int argv,char* argc[ ] ) {
 	printf( "Waiting for terminals...\n" );
 	while( terminals.n_operands ) {
 		struct Operand target = pop_rand( &terminals );
-		QsCoefficient result = qs_terminal_wait( (QsTerminal)( target.value ) );
+		QsCoefficient result = qs_terminal_wait( (QsTerminal*)( &target.value ),1,NULL );
 
 		char* result_str;
 		qs_coefficient_print( result,&result_str );
