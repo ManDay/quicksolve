@@ -20,18 +20,25 @@
 typedef struct Expression* Expression;
 typedef struct BakedExpression* BakedExpression;
 
+struct QsTerminalGroup {
+	unsigned n_targets;
+	unsigned refcount;
+	QsTerminal* targets;
+	/** Status of targets
+	 *
+	 * An additional cache which is protected under the mutex prevents
+	 * spinlocking the Terminals */
+	bool* cache_ready;
+
+	pthread_mutex_t lock;
+	pthread_cond_t change;
+};
+
 struct Expression {
 	QsOperation operation;
 
 	unsigned n_operands;
 	QsOperand* operands;
-};
-
-struct Waiter {
-	pthread_mutex_t lock;
-	pthread_cond_t change;
-	bool operational;
-	unsigned refcount;
 };
 
 struct BakedExpression {
@@ -57,7 +64,7 @@ struct BakedExpression {
 	 * Indicates whether the operand is waited for and yes, by which
 	 * waiter struct.
 	 */
-	struct Waiter* waiter;
+	QsTerminalGroup waiter;
 
 	unsigned n_baked_deps;
 	/** List of BakedExpressions
@@ -185,71 +192,6 @@ void qs_aef_destroy( QsAEF a ) {
 	free( a );
 }
 
-QsCoefficient qs_terminal_wait( QsTerminal* targets,unsigned n_targets,unsigned* index ) {
-	struct Waiter* waiter = malloc( sizeof (struct Waiter) );
-	pthread_mutex_init( &waiter->lock,NULL );
-	pthread_cond_init( &waiter->change,NULL );
-	waiter->operational = true;
-	waiter->refcount = 0;
-
-	QsTerminal result = NULL;
-	unsigned result_index;
-
-	assert( n_targets!=0 );
-
-	pthread_mutex_lock( &waiter->lock );
-	int j;
-	for( j = 0; j<n_targets; j++ ) {
-		QsTerminal target = targets[ j ];
-
-		pthread_spin_lock( &target->lock );
-
-		/* Abort and leave the remaining coefficients untouched if we
-		 * already establish that one is done right here */
-		if( target->is_coefficient ) {
-			result = target;
-			result_index = j;
-			pthread_spin_unlock( &target->lock );
-			break;
-		} else {
-			waiter->refcount++;
-			target->value.expression->waiter = waiter;
-			pthread_spin_unlock( &target->lock );
-		}
-	}
-
-	assert( j==waiter->refcount );
-	while( !result ) {
-		pthread_cond_wait( &waiter->change,&waiter->lock );
-
-		if( waiter->refcount<j ) {
-			int k;
-			for( k = 0; k<n_targets; k++ ) {
-				QsTerminal target = targets[ k ];
-
-				if( target->is_coefficient ) {
-					result = target;
-					result_index = k;
-				}
-			}
-		}
-	}
-
-	if( waiter->refcount==0 ) {
-		pthread_mutex_unlock( &waiter->lock );
-		free( waiter );
-	} else {
-		waiter->operational = false;
-		printf( "Waiter %p is dangling unoperational\n",waiter );
-		pthread_mutex_unlock( &waiter->lock );
-	}
-
-	if( index )
-		*index = result_index;
-
-	return result->value.coefficient;
-}
-
 static QsCompound qs_operand_discoverer( Expression e,unsigned j,bool* is_expression,QsOperation* op ) {
 	if( !( j<e->n_operands ) )
 		return NULL;
@@ -293,6 +235,18 @@ QsTerminal qs_operand_new_from_coefficient( QsCoefficient c ) {
 	return result;
 }
 
+static inline void free_waiter( QsTerminalGroup const g ) {
+	bool destroy = !g->refcount;
+
+	pthread_mutex_unlock( &g->lock );
+
+	if( destroy ) {
+		free( g->targets );
+		free( g->cache_ready );
+		free( g );
+	}
+}
+
 static void* worker( void* udata ) {
 	QsAEF self = (QsAEF)udata;
 	pthread_t self_thread = pthread_self( );
@@ -334,9 +288,7 @@ static void* worker( void* udata ) {
 			target->is_coefficient = true;
 			target->value.coefficient = result;
 
-			struct Waiter* waiter = src->waiter;
-
-			DBG_PRINT_2( "Finished calculation of %p\n",0,target );
+			QsTerminalGroup waiter = src->waiter;
 
 			pthread_spin_unlock( &target->lock );
 
@@ -350,20 +302,10 @@ static void* worker( void* udata ) {
 
 			if( waiter ) {
 				pthread_mutex_lock( &waiter->lock );
-
 				waiter->refcount--;
+				pthread_cond_signal( &waiter->change );
 
-				if( waiter->operational ) {
-					pthread_cond_signal( &waiter->change );
-					pthread_mutex_unlock( &waiter->lock );
-				} else if( waiter->refcount==0 ) {
-					pthread_mutex_unlock( &waiter->lock );
-					printf( "Finalizing noperational waiter %p\n",waiter );
-					free( waiter );
-				} else {
-					printf( "Passing noperational waiter %p\n",waiter );
-					pthread_mutex_unlock( &waiter->lock );
-				}
+				free_waiter( waiter );
 			}
 
 			expression_clean( &src->expression );
@@ -643,6 +585,110 @@ static QsTerminal aef_pop_independent( QsAEF a ) {
 		a->independent = new_stack;
 		a->n_independent--;
 	}
+
+	return result;
+}
+
+QsTerminalGroup qs_terminal_group_new( unsigned size ) {
+	QsTerminalGroup result = malloc( sizeof (struct QsTerminalGroup) );
+	pthread_mutex_init( &result->lock,NULL );
+	pthread_cond_init( &result->change,NULL );
+	result->refcount = 0;
+	result->n_targets = 0;
+	result->targets = malloc( size*sizeof (QsTerminal) );
+	result->cache_ready = malloc( size*sizeof (bool) );
+
+	return result;
+}
+
+void qs_terminal_group_push( QsTerminalGroup g,QsTerminal t ) {
+	pthread_mutex_lock( &g->lock );
+
+	g->targets[ g->n_targets ]= NULL;
+	g->cache_ready[ g->n_targets ]= true;
+	g->n_targets++;
+
+	pthread_spin_lock( &t->lock );
+	if( !t->is_coefficient ) {
+		BakedExpression e = t->value.expression;
+
+		assert( !e->waiter );
+
+		g->targets[ g->n_targets - 1 ]= t;
+		g->cache_ready[ g->n_targets - 1 ]= false;
+		g->refcount++;
+
+		pthread_mutex_unlock( &g->lock );
+		e->waiter = g;
+	}
+	pthread_spin_unlock( &t->lock );
+}
+
+void qs_terminal_group_wait( QsTerminalGroup g ) {
+	pthread_mutex_lock( &g->lock );
+
+	while( g->refcount==g->n_targets )
+		pthread_cond_wait( &g->change,&g->lock );
+
+	pthread_mutex_unlock( &g->lock );
+}
+
+QsCoefficient qs_terminal_group_pop( QsTerminalGroup g,unsigned* index ) {
+	QsCoefficient result = NULL;
+
+	pthread_mutex_lock( &g->lock );
+
+	if( g->refcount!=g->n_targets ) {
+		int j = 0;
+		unsigned passed = 0;
+		while( !result && j<g->n_targets ) {
+			if( g->targets[ j ] ) {
+				if( g->cache_ready[ j ] ) {
+					if( index )
+						*index = passed;
+
+					// No need to lock as access is ordered by the mutex
+					assert( &g->targets[ j ]->is_coefficient );
+					result = g->targets[ j ]->value.coefficient;
+
+					g->targets[ j ]= NULL;
+					g->cache_ready[ j ]= NULL;
+
+					return result;
+				}
+				passed++;
+			}
+		}
+	}
+
+	pthread_mutex_unlock( &g->lock );
+
+	return result;
+}
+
+void qs_terminal_group_destroy( QsTerminalGroup g ) {
+	pthread_mutex_lock( &g->lock );
+
+	free_waiter( g );
+}
+
+QsCoefficient qs_terminal_wait( QsTerminal t ) {
+	QsCoefficient result;
+
+	QsTerminalGroup g = qs_terminal_group_new( 1 );
+	qs_terminal_group_push( g,t );
+	qs_terminal_group_wait( g );
+	result = qs_terminal_group_pop( g,NULL );
+	qs_terminal_group_destroy( g );
+
+	return result;
+}
+
+unsigned qs_terminal_group_count( QsTerminalGroup g ) {
+	unsigned result;
+	pthread_mutex_lock( &g->lock );
+	result = g->refcount;
+	pthread_mutex_unlock( &g->lock );
 
 	return result;
 }

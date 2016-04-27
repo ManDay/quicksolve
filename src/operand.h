@@ -7,6 +7,7 @@ typedef struct QsOperand* QsOperand;
 typedef struct QsTerminal* QsTerminal;
 typedef struct QsIntermediate* QsIntermediate;
 typedef struct QsAEF* QsAEF;
+typedef struct QsTerminalGroup* QsTerminalGroup;
 
 QsAEF qs_aef_new( void );
 bool qs_aef_spawn( QsAEF,QsEvaluatorOptions );
@@ -58,25 +59,12 @@ QsTerminal qs_operand_terminate( QsOperand,QsAEF );
  */
 QsIntermediate qs_operand_link( unsigned,QsOperand*,QsOperation );
 
-/** Wait for the evaluation of a QsTerminal
- *
- * Waits for completion of an evaluation of a QsTerminal in the list and
- * returns a peek of the resulting coefficient.
- *
- * @param An array of QsTerminals to wait for
- *
- * @param The number of elements in the array
- *
- * @param[out] If not NULL, contains the index of the QsTerminal which
- * terminated the wait.
- * 
- * @return[transfer=none] A pointer to the coefficient of the QsTerminal
- * which terminated the wait.
- */
-QsCoefficient qs_terminal_wait( QsTerminal*,unsigned,unsigned* );
-
-//unsigned qs_operand_refcount( QsOperand o );
-
-bool qs_operand_is_ready( QsOperand );
+QsCoefficient qs_terminal_wait( QsTerminal );
+QsTerminalGroup qs_terminal_group_new( unsigned );
+void qs_terminal_group_push( QsTerminalGroup,QsTerminal );
+void qs_terminal_group_wait( QsTerminalGroup );
+QsCoefficient qs_terminal_group_pop( QsTerminalGroup,unsigned* );
+void qs_terminal_group_destroy( QsTerminalGroup );
+unsigned qs_terminal_group_count( QsTerminalGroup );
 
 #endif

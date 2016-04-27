@@ -37,29 +37,14 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 	bool self_found = false;
 	unsigned j_self = 0;
 
-	unsigned n_candidates = 0;
-	QsTerminal* candidates = malloc( target->n_refs*sizeof (QsTerminal*) );
+	Pivot* next_target = NULL;
+	unsigned next_i;
 
-	/* Map from candidate array into reference array. Needed in order to
-	 * know which reference to delete when a candidate was found zero */
+	QsTerminalGroup waiter = qs_terminal_group_new( target->n_refs );
 	unsigned* can_to_ref = malloc( target->n_refs*sizeof (unsigned) );
-	
-	/* Map from references array into candidate array. Needed, because the
-	 * inverse needs the index of the last operand in the reference array
-	 * adjusted and we must thus always know which candidate element
-	 * corresponds to the last reference element. 0 indicates the
-	 * reference is not a candidate whereas any other value x indicates
-	 * x-1 */
-	unsigned* ref_to_can = malloc( target->n_refs*sizeof (unsigned) );
-	
-	/* Collect all suitable coefficients into waiter-array to wait for the
-	 * first available as long as we don't have an available yet. In the
-	 * meantime, look out for self coefficient. */
-	DBG_PRINT_2( "Issuing termination on all possible next candidates\n",rc );
-	int j;
-	for( j = 0; j<target->n_refs; j++ ) {
-		ref_to_can[ j ]= 0;
 
+	int j = 0;
+	while( !next_target && j<target->n_refs ) {
 		Pivot* candidate;
 		if( ( candidate = load_pivot( g,target->refs[ j ].head ) ) ) {
 			const bool suitable_besides_not_self = ( candidate->meta.solved || candidate->meta.order<order )||( despair &&( despair>candidate->meta.consideration ) );
@@ -71,11 +56,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 				QsTerminal wait;
 				target->refs[ j ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef ) );
 
-				candidates[ n_candidates ]= wait;
-				can_to_ref[ n_candidates ]= j;
-				ref_to_can[ j ]= n_candidates + 1;
-
-				n_candidates++;
+				qs_terminal_group_push( waiter,wait );
 			}
 
 			/* Reassert i is inside USAGE_MARGIN. Code further down, such as
@@ -85,78 +66,36 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 			 * assertion), there is no reload and we don't need to recheck the
 			 * location in memory, i.e. target remains unchanged.*/
 			load_pivot( g,i );
-		}
-	}
 
-	/* Determine first-available non-null coefficient from waiter array */
-	unsigned next_i;
-	Pivot* next_target = NULL;
+			if( j + 1==target->n_refs )
+				qs_terminal_group_wait( waiter );
 
-	DBG_PRINT_2( "Awaiting definite result for next candidate\n",rc );
-	while( n_candidates && !next_target ) {
-		unsigned index;
-		QsCoefficient val = qs_terminal_wait( candidates,n_candidates,&index );
+			QsCoefficient val;
+			unsigned index;
+			if( ( val = qs_terminal_group_pop( waiter,&index ) ) ) {
+				unsigned candidate_j = can_to_ref[ index ];
+				unsigned n_candidates = qs_terminal_group_count( waiter );
 
-		unsigned candidate_j = can_to_ref[ index ];
+				/* A QsTerminal was found ready popped out of the candidate
+				 * stack in the waiter. Adjusting our map. */
+				can_to_ref[ index ]= can_to_ref[ n_candidates ];
 
-		if( qs_coefficient_is_zero( val ) ) {
-			DBG_PRINT_2( "Deleting operand %p\n",rc,target->refs[ candidate_j ].coefficient );
-
-			assert( ( (QsOperand)candidates[ index ] )==target->refs[ candidate_j ].coefficient );
-
-			/* The position of the last candidate in the array of candidates
-			 * has changed and the position of the last operand in the array
-			 * of operands has changed.
-			 *
-			 * ref_to_can gives the index of each reference in the array of
-			 * candidates and must thus be changed such that the reference
-			 * which corresponded to the last candidate now gets the correct
-			 * index.
-			 *
-			 * can_to_ref gives the index of each candidate in the array of
-			 * references and must thus be changed such that the candidate
-			 * which corresponded to the last reference now gets the correct
-			 * index.
-			 *
-			 * In both cases, the primary element to which a correspondence is
-			 * sought may have moved within the array, if it was the last
-			 * element.	*/
-
-			unsigned reference_of_prev_last_candidate = can_to_ref[ n_candidates - 1 ];
-			// Adjust index to the last reference
-			if( ref_to_can[ target->n_refs - 1 ] ) {
-				unsigned candidate_of_prev_last_reference = ref_to_can[ target->n_refs - 1 ]- 1;
-				can_to_ref[ candidate_of_prev_last_reference ]= candidate_j;
+				if( qs_coefficient_is_zero( val ) ) {
+					/* The coefficient was found to be zero, we seize the
+					 * opportunity and delete the associated Operand */
+					qs_operand_unref( target->refs[ candidate_j ].coefficient );
+					target->refs[ candidate_j ] = target->refs[ target->n_refs - 1 ];
+					target->n_refs--;
+				} else {
+					next_i = target->refs[ candidate_j ].head;
+					next_target = load_pivot( g,next_i );
+				}
 			}
-
-			// Adjust index to the last candidate
-			ref_to_can[ reference_of_prev_last_candidate ]= index + 1;
-
-			// Move last candidate into delete candidate's place
-			candidates[ index ]= candidates[ n_candidates - 1 ];
-			can_to_ref[ index ]= can_to_ref[ n_candidates - 1 ];
-			n_candidates--;
-
-			// Move last operand into deleted operand's place
-			qs_operand_unref( target->refs[ candidate_j ].coefficient );
-			target->refs[ candidate_j ]= target->refs[ target->n_refs - 1 ];
-			ref_to_can[ candidate_j ]= ref_to_can[ target->n_refs - 1 ];
-			target->n_refs--;
-
-			/* If the self coefficient was the last operand, its index will
-			 * change */
-			if( j_self==target->n_refs )
-				j_self = candidate_j;
-		} else {
-			next_i = target->refs[ candidate_j ].head;
-			assert( next_target = load_pivot( g,next_i ) );
 		}
-
 	}
 
-	free( candidates );
+	qs_terminal_group_destroy( waiter );
 	free( can_to_ref );
-	free( ref_to_can );
 
 	/* A non-null coefficient was found ready in the waiter array */
 	if( next_target ) {
@@ -193,7 +132,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 				QsTerminal wait;
 				target->refs[ j_self ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j_self ].coefficient,g->aef ) );
 
-				if( !qs_coefficient_is_zero( qs_terminal_wait( &wait,1,NULL ) ) ) {
+				if( !qs_coefficient_is_zero( qs_terminal_wait( wait ) ) ) {
 					qs_pivot_graph_normalize( g,i );
 
 					target->meta.solved = true;
@@ -233,7 +172,7 @@ void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,volatile sig_atomic_t* c
 	while( j<target->n_refs ) {
 		QsTerminal wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef );
 		target->refs[ j ].coefficient = (QsOperand)wait;
-		QsCoefficient val = qs_terminal_wait( &wait,1,NULL );
+		QsCoefficient val = qs_terminal_wait( wait );
 
 		if( qs_coefficient_is_zero( val ) ) {
 			qs_operand_unref( target->refs[ j ].coefficient );

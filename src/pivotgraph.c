@@ -394,7 +394,7 @@ struct QsReflist* qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
 			target->refs[ j ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef ) );
 
 			result->references[ j ].head = target->refs[ j ].head;
-			result->references[ j ].coefficient = qs_terminal_wait( &wait,1,NULL );
+			result->references[ j ].coefficient = qs_terminal_wait( wait );
 		}
 	}
 
@@ -414,7 +414,7 @@ void qs_pivot_graph_save( QsPivotGraph g,QsComponent i ) {
 		target->refs[ j ].coefficient = (QsOperand)qs_operand_terminate( target->refs[ j ].coefficient,g->aef );
 
 	for( j = 0; j<target->n_refs; j++ )
-		l.references[ j ]= (struct QsReference){ target->refs[ j ].head,qs_terminal_wait( (QsTerminal*)&target->refs[ j ].coefficient,1,NULL ) };
+		l.references[ j ]= (struct QsReference){ target->refs[ j ].head,qs_terminal_wait( (QsTerminal)target->refs[ j ].coefficient ) };
 
 	g->saver( g->save_data,i,l,target->meta );
 
