@@ -359,19 +359,16 @@ void qs_pivot_graph_normalize( QsPivotGraph g,QsComponent target ) {
 	int j;
 	for( j = 0; j<target_pivot->n_refs; j++ )
 		if( target_pivot->refs[ j ].head==target ) {
-			QsOperand self = (QsOperand)qs_operand_terminate( target_pivot->refs[ j ].coefficient,g->aef );
+			QsOperand self = (QsOperand)qs_operand_bake( 1,&target_pivot->refs[ j ].coefficient,g->aef,QS_OPERATION_SUB );
+			qs_operand_unref( target_pivot->refs[ j ].coefficient );
 
 			int k;
 			for( k = 0; k<target_pivot->n_refs; k++ )
 				if( target_pivot->refs[ k ].head==target ) {
 					target_pivot->refs[ k ].coefficient = (QsOperand)qs_operand_new_from_coefficient( qs_coefficient_one( true ) );
 				} else {
-					QsOperand neg = (QsOperand)qs_operand_link( 1,&target_pivot->refs[ k ].coefficient,QS_OPERATION_SUB );
+					QsOperand new = (QsOperand)qs_operand_link( 2,(QsOperand[ ]){ target_pivot->refs[ k ].coefficient,self },QS_OPERATION_DIV );
 					qs_operand_unref( target_pivot->refs[ k ].coefficient );
-
-					QsOperand new = (QsOperand)qs_operand_link( 2,(QsOperand[ ]){ neg,self },QS_OPERATION_DIV );
-
-					qs_operand_unref( neg );
 
 					target_pivot->refs[ k ].coefficient = new;
 				}

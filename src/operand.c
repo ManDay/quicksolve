@@ -13,6 +13,10 @@
 # include <stdio.h>
 #endif
 
+#if DBG_LEVEL>1
+#	define OP2STR( op ) ( (op)==QS_OPERATION_ADD?"ADD":(op)==QS_OPERATION_MUL?"MUL":(op)==QS_OPERATION_SUB?"SUB":(op)==QS_OPERATION_DIV?"DIV":"" )
+#endif
+
 typedef struct Expression* Expression;
 typedef struct BakedExpression* BakedExpression;
 
@@ -26,6 +30,8 @@ struct Expression {
 struct Waiter {
 	pthread_mutex_t lock;
 	pthread_cond_t change;
+	bool operational;
+	unsigned refcount;
 };
 
 struct BakedExpression {
@@ -180,56 +186,62 @@ void qs_aef_destroy( QsAEF a ) {
 }
 
 QsCoefficient qs_terminal_wait( QsTerminal* targets,unsigned n_targets,unsigned* index ) {
-	struct Waiter waiter ={ PTHREAD_MUTEX_INITIALIZER,PTHREAD_COND_INITIALIZER };
+	struct Waiter* waiter = malloc( sizeof (struct Waiter) );
+	pthread_mutex_init( &waiter->lock,NULL );
+	pthread_cond_init( &waiter->change,NULL );
+	waiter->operational = true;
+	waiter->refcount = 0;
 
 	QsTerminal result = NULL;
 	unsigned result_index;
 
 	assert( n_targets!=0 );
 
-	pthread_mutex_lock( &waiter.lock );
-
+	pthread_mutex_lock( &waiter->lock );
 	int j;
 	for( j = 0; j<n_targets; j++ ) {
 		QsTerminal target = targets[ j ];
 
 		pthread_spin_lock( &target->lock );
 
+		/* Abort and leave the remaining coefficients untouched if we
+		 * already establish that one is done right here */
 		if( target->is_coefficient ) {
 			result = target;
 			result_index = j;
+			pthread_spin_unlock( &target->lock );
 			break;
-		} else
-			target->value.expression->waiter = &waiter;
-
-		pthread_spin_unlock( &target->lock );
-	}
-
-	while( !result ) {
-		pthread_cond_wait( &waiter.change,&waiter.lock );
-
-		int k;
-		for( k = 0; k<n_targets; k++ ) {
-			QsTerminal target = targets[ k ];
-
-			pthread_spin_lock( &target->lock );
-			if( target->is_coefficient ) {
-				result = target;
-				result_index = k;
-			}
+		} else {
+			waiter->refcount++;
+			target->value.expression->waiter = waiter;
 			pthread_spin_unlock( &target->lock );
 		}
 	}
 
-	pthread_mutex_unlock( &waiter.lock );
+	assert( j==waiter->refcount );
+	while( !result ) {
+		pthread_cond_wait( &waiter->change,&waiter->lock );
 
-	while( j>0 ) {
-		QsTerminal target = targets[ --j ];
+		if( waiter->refcount<j ) {
+			int k;
+			for( k = 0; k<n_targets; k++ ) {
+				QsTerminal target = targets[ k ];
 
-		pthread_spin_lock( &target->lock );
-		if( !target->is_coefficient )
-			target->value.expression->waiter = NULL;
-		pthread_spin_unlock( &target->lock );
+				if( target->is_coefficient ) {
+					result = target;
+					result_index = k;
+				}
+			}
+		}
+	}
+
+	if( waiter->refcount==0 ) {
+		pthread_mutex_unlock( &waiter->lock );
+		free( waiter );
+	} else {
+		waiter->operational = false;
+		printf( "Waiter %p is dangling unoperational\n",waiter );
+		pthread_mutex_unlock( &waiter->lock );
 	}
 
 	if( index )
@@ -321,17 +333,13 @@ static void* worker( void* udata ) {
 
 			target->is_coefficient = true;
 			target->value.coefficient = result;
+
 			struct Waiter* waiter = src->waiter;
 
-			/* As soon as we unlock, me must consider the memory of target
-			 * purged, because other threads may already have taken care and
-			 * dispensed of it. */
+			DBG_PRINT_2( "Finished calculation of %p\n",0,target );
+
 			pthread_spin_unlock( &target->lock );
 
-			/* First issue dependendent calculations, then deal with the
-			 * waiter, because dealing with the waiter may block (shortly)
-			 * when the waiting thread holds the lock to do things with other
-			 * waited-for operands. */
 			int j;
 			for( j = 0; j<src->n_baked_deps; j++ ) {
 				QsTerminal depender = src->baked_deps[ j ];
@@ -342,8 +350,20 @@ static void* worker( void* udata ) {
 
 			if( waiter ) {
 				pthread_mutex_lock( &waiter->lock );
-				pthread_cond_signal( &waiter->change );
-				pthread_mutex_unlock( &waiter->lock );
+
+				waiter->refcount--;
+
+				if( waiter->operational ) {
+					pthread_cond_signal( &waiter->change );
+					pthread_mutex_unlock( &waiter->lock );
+				} else if( waiter->refcount==0 ) {
+					pthread_mutex_unlock( &waiter->lock );
+					printf( "Finalizing noperational waiter %p\n",waiter );
+					free( waiter );
+				} else {
+					printf( "Passing noperational waiter %p\n",waiter );
+					pthread_mutex_unlock( &waiter->lock );
+				}
 			}
 
 			expression_clean( &src->expression );
@@ -442,9 +462,13 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsAEF queue,QsOper
 	e->n_operands = n_operands;
 	e->operands = malloc( n_operands*sizeof (QsOperand) );
 
+	DBG_PRINT_2( "Baking ",0 );
+
 	int k;
 	for( k = 0; k<n_operands; k++ ) {
 		QsOperand next_raw = os[ k ];
+
+		DBG_APPEND_2( "%p ",next_raw );
 		
 		if( next_raw->is_terminal ) {
 			QsTerminal next = (QsTerminal)next_raw;
@@ -469,6 +493,8 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsAEF queue,QsOper
 		e->operands[ k ]= qs_operand_ref( next_raw );
 	}
 
+	DBG_APPEND_2( "by %s into %p\n",OP2STR( op ),result );
+
 	expression_independ( result );
 
 	return result;
@@ -488,9 +514,13 @@ QsIntermediate qs_operand_link( unsigned n_operands,QsOperand* os,QsOperation op
 	e->n_operands = n_operands;
 	e->operands = malloc( n_operands*sizeof (QsOperand) );
 
+	DBG_PRINT_2( "Linking ",0 );
+
 	int k;
 	for( k = 0; k<n_operands; k++ ) {
 		QsOperand next_raw = os[ k ];
+
+		DBG_APPEND_2( "%p ",next_raw );
 		
 		if( next_raw->is_terminal ) {
 			QsTerminal next = (QsTerminal)next_raw;
@@ -510,6 +540,7 @@ QsIntermediate qs_operand_link( unsigned n_operands,QsOperand* os,QsOperation op
 		e->operands[ k ]= qs_operand_ref( next_raw );
 	}
 
+	DBG_APPEND_2( "by %s into %p\n",OP2STR( op ),result );
 	return result;
 }
 
@@ -538,6 +569,7 @@ static void expression_clean( Expression e ) {
 
 void qs_operand_unref( QsOperand o ) {
 	if( atomic_fetch_sub_explicit( &o->refcount,1,memory_order_acquire )==1 ) {
+		DBG_PRINT_2( "Destroying operand %p\n",0,o );
 		if( o->is_terminal ) {
 			QsTerminal target = (QsTerminal)o;
 
