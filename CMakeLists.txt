@@ -51,6 +51,14 @@ else( )
 	add_definitions( "-D'DBG_APPEND_2( ... )=DBG_APPEND( __VA_ARGS__ )'" )
 endif( )
 
+if( "${QS_DEBUG_LEVEL}" LESS "3" )
+	add_definitions( "-D'DBG_PRINT_3( ... )='" )
+	add_definitions( "-D'DBG_APPEND_3( ... )='" )
+else( )
+	add_definitions( "-D'DBG_PRINT_3( ... )=DBG_PRINT( __VA_ARGS__ )'" )
+	add_definitions( "-D'DBG_APPEND_3( ... )=DBG_APPEND( __VA_ARGS__ )'" )
+endif( )
+
 find_path( KYOTO_INCLUDE_DIR "kclangc.h" DOC "Directory of kclangc.h" )
 find_library( KYOTO_LIB "kyotocabinet" DOC "Path to libkyotocabinet" )
 

@@ -25,6 +25,8 @@
  * - Attempt further eliminations on problematic pivot.
  */
 
+#include <unistd.h>
+
 static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsigned rc,volatile sig_atomic_t* const terminate  ) {
 	Pivot* target = load_pivot( g,i );
 
@@ -32,6 +34,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 		return;
 
 	const unsigned order = target->meta.order;
+
 	target->meta.consideration++;
 
 	bool self_found = false;
@@ -41,10 +44,11 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 	unsigned next_i;
 
 	QsTerminalGroup waiter = qs_terminal_group_new( target->n_refs );
-	unsigned* can_to_ref = malloc( target->n_refs*sizeof (unsigned) );
 
 	int j = 0;
+	DBG_PRINT_2( "Determining next target in %i\n",rc,order );
 	while( !next_target && j<target->n_refs ) {
+		int j_next = j + 1;
 		Pivot* candidate;
 		if( ( candidate = load_pivot( g,target->refs[ j ].head ) ) ) {
 			const bool suitable_besides_not_self = ( candidate->meta.solved || candidate->meta.order<order )||( despair &&( despair>candidate->meta.consideration ) );
@@ -53,6 +57,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 				self_found = true;
 				j_self = j;
 			} else if( suitable_besides_not_self ) {
+				DBG_PRINT_2( " Candidate %i (%hi,%s)\n",rc,candidate->meta.order,candidate->meta.consideration,candidate->meta.solved?"true":"false" );
 				QsTerminal wait;
 				target->refs[ j ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef ) );
 
@@ -66,61 +71,92 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 			 * assertion), there is no reload and we don't need to recheck the
 			 * location in memory, i.e. target remains unchanged.*/
 			load_pivot( g,i );
+		}
 
-			if( j + 1==target->n_refs )
-				qs_terminal_group_wait( waiter );
-
+		do {
 			QsCoefficient val;
-			unsigned index;
-			if( ( val = qs_terminal_group_pop( waiter,&index ) ) ) {
-				unsigned candidate_j = can_to_ref[ index ];
-				unsigned n_candidates = qs_terminal_group_count( waiter );
+			QsTerminal val_term;
 
-				/* A QsTerminal was found ready popped out of the candidate
-				 * stack in the waiter. Adjusting our map. */
-				can_to_ref[ index ]= can_to_ref[ n_candidates ];
+			if( ( val = qs_terminal_group_pop( waiter,&val_term ) ) ) {
+				unsigned candidate_j;
+				for( candidate_j = 0; candidate_j<target->n_refs; candidate_j++ )
+					if( target->refs[ candidate_j ].coefficient==(QsOperand)val_term )
+						break;
+
+				DBG_PRINT_2( " Operand %i is ready (%i remaining)\n",rc,candidate_j,qs_terminal_group_count( waiter ) );
 
 				if( qs_coefficient_is_zero( val ) ) {
+					DBG_PRINT_2( " Deleting operand %p\n",rc,target->refs[ candidate_j ].coefficient );
 					/* The coefficient was found to be zero, we seize the
-					 * opportunity and delete the associated Operand */
+					 * opportunity and delete the associated Operand. For that we
+					 * move the current operand (which was taken care of at this
+					 * point) into the deleted operands's place and the last
+					 * operand into the current operand's place and do NOT advance
+					 * j so as to not to have to reset j to the deleted operands
+					 * place, which would induce redundant passes. */
 					qs_operand_unref( target->refs[ candidate_j ].coefficient );
-					target->refs[ candidate_j ] = target->refs[ target->n_refs - 1 ];
+					target->refs[ candidate_j ] = target->refs[ j ];
+					target->refs[ j ]= target->refs[ target->n_refs - 1 ];
 					target->n_refs--;
+
+					if( j_self==j )
+						j_self = candidate_j;
+					else if( j_self==target->n_refs )
+						j_self = j;
+
+					j_next = j;
 				} else {
 					next_i = target->refs[ candidate_j ].head;
 					next_target = load_pivot( g,next_i );
 				}
 			}
-		}
+
+			if( !next_target && j_next==target->n_refs ) {
+				DBG_PRINT_2( " No more additional candidates, waiting\n",rc );
+				qs_terminal_group_wait( waiter );
+				j = j_next - 1;
+			}
+		} while( !next_target && j_next==target->n_refs && qs_terminal_group_count( waiter ) );
+		j = j_next;
 	}
 
 	qs_terminal_group_destroy( waiter );
-	free( can_to_ref );
 
 	/* A non-null coefficient was found ready in the waiter array */
 	if( next_target ) {
 		target->meta.solved = false;
+		target->meta.touched = false;
+
+		unsigned bfr_count = target->n_refs;
+		QsOperand bfr_op = target->refs[ target->n_refs - 1 ].coefficient;
 
 		DBG_PRINT( "Eliminating %i from %i {\n",rc,next_target->meta.order,order );
-		czakon_prime( g,next_i,0,rc + 1,terminate );
-
+		czakon_prime( g,next_i,despair,rc + 1,terminate );
 		DBG_PRINT( "}\n",rc );
 
 		if( *terminate )
 			return;
 
-		/* Reassert next_i and i are inside USAGE_MARGIN, update memory
-		 * location contrary to above! */
-		next_target = load_pivot( g,next_i );
-		target = load_pivot( g,i );
+		/* Further desperate recursions may have touched and modified the
+		 * current target, in which case the current data is obsolete. */
+		if( !target->meta.touched ) {
+			assert( bfr_count==target->n_refs && bfr_op==target->refs[ bfr_count - 1 ].coefficient );
 
-		/* We bake neither the relay nor the collect, because we will
-		 * eventually bake the current pivot on normalize. */
-		qs_pivot_graph_relay( g,i,next_i );
+			/* Reassert next_i and i are inside USAGE_MARGIN, update memory
+			 * location contrary to above! */
+			next_target = load_pivot( g,next_i );
+			target = load_pivot( g,i );
 
-		DBG_PRINT_2( "Collecting %i operands\n",rc,target->n_refs );
-		for( j = 0; j<target->n_refs; j++ )
-			qs_pivot_graph_collect( g,i,target->refs[ j ].head );
+			/* We bake neither the relay nor the collect, because we will
+			 * eventually bake the current pivot on normalize. */
+			qs_pivot_graph_relay( g,i,next_i );
+
+			DBG_PRINT_2( "Collecting %i operands\n",rc,target->n_refs );
+			for( j = 0; j<target->n_refs; j++ )
+				qs_pivot_graph_collect( g,i,target->refs[ j ].head );
+		}
+
+		target->meta.touched = true;
 
 		czakon_prime( g,i,despair,rc,terminate );
 	} else {
@@ -129,6 +165,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 		if( !target->meta.solved ) {
 			if( self_found ) {
 				DBG_PRINT( "Normalizing %i for substitution\n",rc,order );
+				assert( j_self<target->n_refs && target->refs[ j_self ].head==i );
 				QsTerminal wait;
 				target->refs[ j_self ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j_self ].coefficient,g->aef ) );
 
@@ -150,7 +187,8 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 			}
 			czakon_prime( g,i,despair + 1,rc + 1,terminate );
 			DBG_PRINT( "}\n",rc );
-		}
+		} else
+			target->meta.consideration--;
 	}
 }
 
@@ -159,7 +197,7 @@ void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,volatile sig_atomic_t* c
 		return;
 
 	DBG_PRINT( "Solving for Pivot %i {\n",0,g->components[ i ]->meta.order );
-	czakon_prime( g,i,1,1,terminate );
+	czakon_prime( g,i,0,1,terminate );
 	DBG_PRINT( "}\n",0 );
 
 	// Reassert i is inside of USAGE_MARGIN

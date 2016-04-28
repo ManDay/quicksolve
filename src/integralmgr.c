@@ -156,10 +156,16 @@ void qs_integral_mgr_save_expression( QsIntegralMgr m,QsComponent i,struct QsRef
 	if( meta.solved )
 		entry->vallen = expression_size;
 	else {
+		assert( QS_METADATA_USAGE<=QS_METADATA_SIZE );
+
 		entry->vallen = expression_size + QS_METADATA_SIZE;
 		entry->val = realloc( entry->val,entry->vallen );
+
+		char flags =( meta.solved?1:0 )|( meta.touched?2:0 );
+
 		*( (int*)( entry->val + expression_size ) )= meta.order;
-		*( (char*)( entry->val + expression_size + sizeof (int) ) )= meta.solved?1:0;
+		*( (short*)( entry->val + expression_size + sizeof (int) ) )= meta.consideration;
+		*( (char*)( entry->val + expression_size + sizeof (int) + sizeof (short) ) )= flags;
 	}
 
 	qs_db_set( dbs.readwrite,entry );
@@ -194,10 +200,17 @@ struct QsReflist qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,
 
 		if( data->vallen>=n+QS_METADATA_SIZE ) {
 			meta->order = *( (int*)( data->val + n ) );
-			meta->solved = *( (char*)( data->val + n + sizeof (int) ) )!='\0';
+			meta->consideration = *( (short*)( data->val + n + sizeof (int) ) );
+			char flags = *( (char*)( data->val + n + sizeof (int) + sizeof (short) ) );
+
+			meta->solved = flags&1;
+			meta->touched = flags&2;
 		} else {
 			meta->order = 0;
+			meta->consideration = 0;
 			meta->solved = true;
+			meta->touched = false;
+
 			sub_self = true;
 		}
 
@@ -206,7 +219,9 @@ struct QsReflist qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,
 		/* Obtain identity from identity database */
 		e = qs_expression_new_from_binary( data->val,data->vallen,NULL );
 		meta->order = *( (int*)( data->val + data->vallen - sizeof (int) ) );
+		meta->consideration = 0;
 		meta->solved = false;
+		meta->touched = false;
 
 		if( e )
 			if( qs_expression_n_terms( e )==1 && qs_coefficient_is_one( qs_expression_coefficient( e,0 ) ) )

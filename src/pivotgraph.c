@@ -97,17 +97,6 @@ static void insert_usage( QsPivotGraph g,Pivot* target ) {
 	}
 
 	g->usage.newest = &target->usage;
-
-	/*FILE* out = stdout;
-	fprintf( out,"Usage (%i to %i): ",g->usage.oldest->component,g->usage.newest->component );
-	struct PivotLink* current = g->usage.oldest;
-	while( current ) {
-		fprintf( out,"%i",current->component );
-		if( current->after )
-			fprintf( out,"," );
-		current = current->after;
-	}
-	fprintf( out,"\n" );//*/
 }
 
 static void notify_usage( QsPivotGraph g,Pivot* target ) {

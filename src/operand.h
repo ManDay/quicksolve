@@ -61,10 +61,11 @@ QsIntermediate qs_operand_link( unsigned,QsOperand*,QsOperation );
 
 QsCoefficient qs_terminal_wait( QsTerminal );
 QsTerminalGroup qs_terminal_group_new( unsigned );
-void qs_terminal_group_push( QsTerminalGroup,QsTerminal );
+unsigned qs_terminal_group_push( QsTerminalGroup,QsTerminal );
 void qs_terminal_group_wait( QsTerminalGroup );
-QsCoefficient qs_terminal_group_pop( QsTerminalGroup,unsigned* );
+QsCoefficient qs_terminal_group_pop( QsTerminalGroup,QsTerminal* );
 void qs_terminal_group_destroy( QsTerminalGroup );
 unsigned qs_terminal_group_count( QsTerminalGroup );
+QsTerminal qs_terminal_group_peek( QsTerminalGroup,unsigned );
 
 #endif
