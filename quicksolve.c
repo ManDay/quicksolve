@@ -116,7 +116,7 @@ int main( const int argc,char* const argv[ ] ) {
 				char* head,* coeff;
 
 				qs_integral_print( qs_integral_mgr_peek( mgr,id ),&head );
-				fprintf( outfile,"%s =",head );
+				fprintf( outfile,"fill %s =",head );
 				free( head );
 
 				if( result->n_references>1 ) {
@@ -125,14 +125,14 @@ int main( const int argc,char* const argv[ ] ) {
 						if( result->references[ j ].head!=id ) {
 							qs_integral_print( qs_integral_mgr_peek( mgr,result->references[ j ].head ),&head );
 							qs_coefficient_print( result->references[ j ].coefficient,&coeff );
-							fprintf( outfile,"\n+ %s*(%s)",head,coeff );
+							fprintf( outfile,"\n + %s * (%s)",head,coeff );
 							free( coeff );
 							free( head );
 						}
 				} else
 					fprintf( outfile,"\n0" );
 
-				fprintf( outfile,";\n" );
+				fprintf( outfile,"\n;\n" );
 				fflush( outfile );
 
 				free( result->references );

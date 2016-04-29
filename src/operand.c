@@ -21,13 +21,11 @@ typedef struct Expression* Expression;
 typedef struct BakedExpression* BakedExpression;
 
 struct QsTerminalGroup {
+	unsigned allocated;
 	unsigned n_targets;
-	unsigned refcount;
-
-	/* Number of non-NULL targets to compare refcount (which decreases
-	 * when a coefficient is finished) to the number of targets. */
-	unsigned cache_uncleaned;
 	QsTerminal* targets;
+
+	atomic_uint refcount;
 
 	pthread_mutex_t lock;
 	pthread_cond_t change;
@@ -234,17 +232,6 @@ QsTerminal qs_operand_new_from_coefficient( QsCoefficient c ) {
 	return result;
 }
 
-static inline void free_waiter( QsTerminalGroup const g ) {
-	bool destroy = !g->refcount;
-
-	pthread_mutex_unlock( &g->lock );
-
-	if( destroy ) {
-		free( g->targets );
-		free( g );
-	}
-}
-
 static void* worker( void* udata ) {
 	QsAEF self = (QsAEF)udata;
 	pthread_t self_thread = pthread_self( );
@@ -299,11 +286,30 @@ static void* worker( void* udata ) {
 			}
 
 			if( waiter ) {
+				/* Lock the mutex and abuse the refcount. Since the refcount is
+				 * abused to indicate whether a coefficient has finished, we
+				 * decrease the refcount before sending the signal, which in
+				 * turn happens before we unlock the mutex (which is an
+				 * operation using the waiter whose refcount we already gave
+				 * away).
+				 * In order to prevent others (i.e. the destroy function) from
+				 * deleting the worker after we dropped the reference but before
+				 * we unlocked the mutex, that deleting is again blocked by a
+				 * lock of the mutex.
+				 * At least this gives a certain purpose the mutex which would
+				 * actually be superflous in the first place as we are using an
+				 * atomic datum to identify spurious wakeups. */
 				pthread_mutex_lock( &waiter->lock );
-				waiter->refcount--;
+
+				unsigned refcount = atomic_fetch_sub_explicit( &waiter->refcount,1,memory_order_acq_rel )- 1;
 				pthread_cond_signal( &waiter->change );
 
-				free_waiter( waiter );
+				pthread_mutex_unlock( &waiter->lock );
+
+				if( !refcount ) {
+					free( waiter->targets );
+					free( waiter );
+				}
 			}
 
 			expression_clean( &src->expression );
@@ -504,7 +510,7 @@ static void expression_clean( Expression e ) {
 }
 
 void qs_operand_unref( QsOperand o ) {
-	if( atomic_fetch_sub_explicit( &o->refcount,1,memory_order_acquire )==1 ) {
+	if( atomic_fetch_sub_explicit( &o->refcount,1,memory_order_acq_rel )==1 ) {
 		DBG_PRINT_3( "Destroying operand %p\n",0,o );
 		if( o->is_terminal ) {
 			QsTerminal target = (QsTerminal)o;
@@ -587,35 +593,31 @@ QsTerminalGroup qs_terminal_group_new( unsigned size ) {
 	QsTerminalGroup result = malloc( sizeof (struct QsTerminalGroup) );
 	pthread_mutex_init( &result->lock,NULL );
 	pthread_cond_init( &result->change,NULL );
-	result->refcount = 1;
+	result->allocated = size;
 	result->n_targets = 0;
-	result->cache_uncleaned = 0;
 	result->targets = malloc( size*sizeof (QsTerminal) );
+	atomic_init( &result->refcount,1 );
+	atomic_thread_fence( memory_order_acq_rel );
 
 	return result;
 }
 
 unsigned qs_terminal_group_push( QsTerminalGroup g,QsTerminal t ) {
+	if( g->allocated==g->n_targets )
+		g->targets = realloc( g->targets,++( g->allocated )*sizeof (QsTerminal) );
 
 	g->targets[ g->n_targets ]= t;
 	g->n_targets++;
-
-	pthread_mutex_lock( &g->lock );
-	g->cache_uncleaned++;
 
 	pthread_spin_lock( &t->lock );
 	if( !t->is_coefficient ) {
 		BakedExpression e = t->value.expression;
 
+		atomic_fetch_add_explicit( &g->refcount,1,memory_order_release );
+
 		assert( !e->waiter );
-
-		g->refcount++;
-
-		pthread_mutex_unlock( &g->lock );
 		e->waiter = g;
-	} else
-		pthread_mutex_unlock( &g->lock );
-
+	}
 	pthread_spin_unlock( &t->lock );
 
 	return g->n_targets - 1;
@@ -624,46 +626,36 @@ unsigned qs_terminal_group_push( QsTerminalGroup g,QsTerminal t ) {
 void qs_terminal_group_wait( QsTerminalGroup g ) {
 	pthread_mutex_lock( &g->lock );
 
-	if( g->refcount>1 )
-		while( g->refcount==g->cache_uncleaned + 1 )
+	if( g->n_targets )
+		while( atomic_load_explicit( &g->refcount,memory_order_acquire )==g->n_targets + 1 )
 			pthread_cond_wait( &g->change,&g->lock );
 
 	pthread_mutex_unlock( &g->lock );
 }
 
-QsCoefficient qs_terminal_group_pop( QsTerminalGroup g,QsTerminal* index ) {
+QsCoefficient qs_terminal_group_pop( QsTerminalGroup g,QsTerminal* t ) {
 	QsCoefficient result = NULL;
 
-	pthread_mutex_lock( &g->lock );
-
-	assert( g->refcount<=g->cache_uncleaned + 1 );
-
-	if( g->refcount<g->cache_uncleaned + 1 ) {
-		pthread_mutex_unlock( &g->lock );
+	if( atomic_load_explicit( &g->refcount,memory_order_acquire )!=g->n_targets + 1 ) {
 		int j = 0;
-		unsigned passed = 0;
 		while( !result && j<g->n_targets ) {
 			QsTerminal target = g->targets[ j ];
-			if( target ) {
-				pthread_mutex_lock( &g->lock );
-				pthread_spin_lock( &target->lock );
-				if( target->is_coefficient ) {
-					if( index )
-						*index = target;
 
-					result = target->value.coefficient;
-					g->cache_uncleaned--;
-
-					g->targets[ j ]= NULL;
-				}
+			pthread_spin_lock( &target->lock );
+			if( target->is_coefficient ) {
 				pthread_spin_unlock( &target->lock );
-				pthread_mutex_unlock( &g->lock );
-				passed++;
-			}
+				if( t )
+					*t = target;
+
+				result = target->value.coefficient;
+				g->targets[ j ]= g->targets[ g->n_targets - 1 ];
+				g->n_targets--;
+			} else
+				pthread_spin_unlock( &target->lock );
+
 			j++;
 		}
-	} else
-		pthread_mutex_unlock( &g->lock );
+	}
 
 	return result;
 }
@@ -680,20 +672,28 @@ void qs_terminal_group_destroy( QsTerminalGroup g ) {
 	for( j = 0; j<g->n_targets; j++ ) {
 		QsTerminal target = g->targets[ j ];
 		if( target ) {
-			pthread_mutex_lock( &g->lock );
 			pthread_spin_lock( &target->lock );
+
 			if( !target->is_coefficient ) {
+				assert( target->value.expression->waiter );
+				atomic_fetch_sub_explicit( &g->refcount,1,memory_order_relaxed );
 				target->value.expression->waiter = NULL;
-				g->refcount--;
 			}
-			pthread_spin_unlock( &g->targets[ j ]->lock );
-			pthread_mutex_unlock( &g->lock );
+
+			pthread_spin_unlock( &target->lock );
 		}
 	}
 
+	/* Do not free even if refcount is 0 unless the worker is done dealing
+	 * with the waiter (c.f. comment in worker about abuse of refcount) */
 	pthread_mutex_lock( &g->lock );
-	g->refcount--;
-	free_waiter( g );
+	unsigned new = atomic_fetch_sub_explicit( &g->refcount,1,memory_order_acq_rel )- 1;
+	pthread_mutex_unlock( &g->lock );
+
+	if( !new ) {
+		free( g->targets );
+		free( g );
+	}
 }
 
 QsCoefficient qs_terminal_wait( QsTerminal t ) {
@@ -709,26 +709,5 @@ QsCoefficient qs_terminal_wait( QsTerminal t ) {
 }
 
 unsigned qs_terminal_group_count( QsTerminalGroup g ) {
-	unsigned result;
-	result = g->cache_uncleaned;
-
-	return result;
+	return g->n_targets;
 }
-
-/* DELETE ME! */
-QsTerminal qs_terminal_group_peek( QsTerminalGroup g,unsigned index ) {
-	int i,j = 0;
-	for( i = 0; i<g->n_targets; i++ )
-		if( g->targets[ i ] ) {
-			if( index==j )
-				return g->targets[ i ];
-			j++;
-		}
-
-	assert( false );
-}
-
-unsigned qs_operand_refcount( QsOperand o ) {
-	return atomic_load_explicit( &o->refcount,memory_order_relaxed );
-}
-

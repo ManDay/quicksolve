@@ -131,7 +131,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 		QsOperand bfr_op = target->refs[ target->n_refs - 1 ].coefficient;
 
 		DBG_PRINT( "Eliminating %i from %i {\n",rc,next_target->meta.order,order );
-		czakon_prime( g,next_i,despair,rc + 1,terminate );
+		czakon_prime( g,next_i,0*despair,rc + 1,terminate );
 		DBG_PRINT( "}\n",rc );
 
 		if( *terminate )
@@ -197,7 +197,7 @@ void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,volatile sig_atomic_t* c
 		return;
 
 	DBG_PRINT( "Solving for Pivot %i {\n",0,g->components[ i ]->meta.order );
-	czakon_prime( g,i,0,1,terminate );
+	czakon_prime( g,i,1,1,terminate );
 	DBG_PRINT( "}\n",0 );
 
 	// Reassert i is inside of USAGE_MARGIN
