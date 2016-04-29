@@ -66,6 +66,6 @@ void qs_terminal_group_wait( QsTerminalGroup );
 QsCoefficient qs_terminal_group_pop( QsTerminalGroup,QsTerminal* );
 void qs_terminal_group_destroy( QsTerminalGroup );
 unsigned qs_terminal_group_count( QsTerminalGroup );
-QsTerminal qs_terminal_group_peek( QsTerminalGroup,unsigned );
+void qs_terminal_group_clear( QsTerminalGroup );
 
 #endif

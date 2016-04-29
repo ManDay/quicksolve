@@ -27,7 +27,7 @@
 
 #include <unistd.h>
 
-static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsigned rc,volatile sig_atomic_t* const terminate  ) {
+static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsigned rc,volatile sig_atomic_t* const terminate,QsTerminalGroup waiter ) {
 	Pivot* target = load_pivot( g,i );
 
 	if( !target )
@@ -43,7 +43,8 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 	Pivot* next_target = NULL;
 	unsigned next_i;
 
-	QsTerminalGroup waiter = qs_terminal_group_new( target->n_refs );
+	if( !waiter )
+		waiter = qs_terminal_group_new( target->n_refs );
 
 	int j = 0;
 	DBG_PRINT_2( "Determining next target in %i\n",rc,order );
@@ -120,33 +121,31 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 		j = j_next;
 	}
 
-	qs_terminal_group_destroy( waiter );
 
 	/* A non-null coefficient was found ready in the waiter array */
 	if( next_target ) {
+		qs_terminal_group_clear( waiter );
+
 		target->meta.solved = false;
 		target->meta.touched = false;
 
-		unsigned bfr_count = target->n_refs;
-		QsOperand bfr_op = target->refs[ target->n_refs - 1 ].coefficient;
-
 		DBG_PRINT( "Eliminating %i from %i {\n",rc,next_target->meta.order,order );
-		czakon_prime( g,next_i,0*despair,rc + 1,terminate );
+		czakon_prime( g,next_i,0,rc + 1,terminate,NULL );
 		DBG_PRINT( "}\n",rc );
 
-		if( *terminate )
+		if( *terminate ) {
+			qs_terminal_group_destroy( waiter );
 			return;
+		}
+
+		/* Reassert next_i and i are inside USAGE_MARGIN, update memory
+		 * location contrary to above! */
+		next_target = load_pivot( g,next_i );
+		target = load_pivot( g,i );
 
 		/* Further desperate recursions may have touched and modified the
 		 * current target, in which case the current data is obsolete. */
 		if( !target->meta.touched ) {
-			assert( bfr_count==target->n_refs && bfr_op==target->refs[ bfr_count - 1 ].coefficient );
-
-			/* Reassert next_i and i are inside USAGE_MARGIN, update memory
-			 * location contrary to above! */
-			next_target = load_pivot( g,next_i );
-			target = load_pivot( g,i );
-
 			/* We bake neither the relay nor the collect, because we will
 			 * eventually bake the current pivot on normalize. */
 			qs_pivot_graph_relay( g,i,next_i );
@@ -158,14 +157,15 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 
 		target->meta.touched = true;
 
-		czakon_prime( g,i,despair,rc,terminate );
+		czakon_prime( g,i,despair,rc,terminate,waiter );
 	} else {
+		qs_terminal_group_destroy( waiter );
+
 		/* If we ended up here because of back-substitution, solving is true
 		 * but if we haven't made any changes, solved is still true */
 		if( !target->meta.solved ) {
 			if( self_found ) {
 				DBG_PRINT( "Normalizing %i for substitution\n",rc,order );
-				assert( j_self<target->n_refs && target->refs[ j_self ].head==i );
 				QsTerminal wait;
 				target->refs[ j_self ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j_self ].coefficient,g->aef ) );
 
@@ -185,7 +185,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 				fprintf( stderr,"Error: Recursion for desperate elimination reached limit\n" );
 				abort( );
 			}
-			czakon_prime( g,i,despair + 1,rc + 1,terminate );
+			czakon_prime( g,i,despair + 1,rc + 1,terminate,NULL );
 			DBG_PRINT( "}\n",rc );
 		} else
 			target->meta.consideration--;
@@ -197,7 +197,7 @@ void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,volatile sig_atomic_t* c
 		return;
 
 	DBG_PRINT( "Solving for Pivot %i {\n",0,g->components[ i ]->meta.order );
-	czakon_prime( g,i,1,1,terminate );
+	czakon_prime( g,i,1,1,terminate,NULL );
 	DBG_PRINT( "}\n",0 );
 
 	// Reassert i is inside of USAGE_MARGIN

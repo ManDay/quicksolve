@@ -661,7 +661,21 @@ QsCoefficient qs_terminal_group_pop( QsTerminalGroup g,QsTerminal* t ) {
 }
 
 void qs_terminal_group_destroy( QsTerminalGroup g ) {
+	qs_terminal_group_clear( g );
 
+	/* Do not free even if refcount is 0 unless the worker is done dealing
+	 * with the waiter (c.f. comment in worker about abuse of refcount) */
+	pthread_mutex_lock( &g->lock );
+	unsigned new = atomic_fetch_sub_explicit( &g->refcount,1,memory_order_acq_rel )- 1;
+	pthread_mutex_unlock( &g->lock );
+
+	if( !new ) {
+		free( g->targets );
+		free( g );
+	}
+}
+
+void qs_terminal_group_clear( QsTerminalGroup g ) {
 	/* We are removing references to this waiter on non-coefficient
 	 * QsTerminals (which have thus not even taken notice of their waiter)
 	 * because removing those references needs a lock and we don't want to
@@ -684,16 +698,7 @@ void qs_terminal_group_destroy( QsTerminalGroup g ) {
 		}
 	}
 
-	/* Do not free even if refcount is 0 unless the worker is done dealing
-	 * with the waiter (c.f. comment in worker about abuse of refcount) */
-	pthread_mutex_lock( &g->lock );
-	unsigned new = atomic_fetch_sub_explicit( &g->refcount,1,memory_order_acq_rel )- 1;
-	pthread_mutex_unlock( &g->lock );
-
-	if( !new ) {
-		free( g->targets );
-		free( g );
-	}
+	g->n_targets = 0;
 }
 
 QsCoefficient qs_terminal_wait( QsTerminal t ) {
