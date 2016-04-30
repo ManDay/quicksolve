@@ -110,21 +110,21 @@ int main( const int argc,char* const argv[ ] ) {
 			if( terminate )
 				break;
 
-			struct QsReflist* result = qs_pivot_graph_wait( p,id );
+			struct QsReflist result = qs_pivot_graph_wait( p,id );
 
-			if( result ) {
+			if( result.references ) {
 				char* head,* coeff;
 
 				qs_integral_print( qs_integral_mgr_peek( mgr,id ),&head );
 				fprintf( outfile,"fill %s =",head );
 				free( head );
 
-				if( result->n_references>1 ) {
+				if( result.n_references>1 ) {
 					int j;
-					for( j = 0; j<result->n_references; j++ )
-						if( result->references[ j ].head!=id ) {
-							qs_integral_print( qs_integral_mgr_peek( mgr,result->references[ j ].head ),&head );
-							qs_coefficient_print( result->references[ j ].coefficient,&coeff );
+					for( j = 0; j<result.n_references; j++ )
+						if( result.references[ j ].head!=id ) {
+							qs_integral_print( qs_integral_mgr_peek( mgr,result.references[ j ].head ),&head );
+							qs_coefficient_print( result.references[ j ].coefficient,&coeff );
 							fprintf( outfile,"\n + %s * (%s)",head,coeff );
 							free( coeff );
 							free( head );
@@ -135,8 +135,7 @@ int main( const int argc,char* const argv[ ] ) {
 				fprintf( outfile,"\n;\n" );
 				fflush( outfile );
 
-				free( result->references );
-				free( result );
+				free( result.references );
 			}
 		} else
 			fprintf( stderr,"Warning: Could not parse '%s'\n",buffer );

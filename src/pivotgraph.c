@@ -367,23 +367,30 @@ void qs_pivot_graph_normalize( QsPivotGraph g,QsComponent target ) {
 		}
 }
 
-struct QsReflist* qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
+void qs_pivot_graph_terminate( QsPivotGraph g,QsComponent i ) {
 	Pivot* target = g->components[ i ];
 
-	struct QsReflist* result = NULL;
+	int j;
+	if( target )
+		for( j = 0; j<target->n_refs; j++ )
+			target->refs[ j ].coefficient = (QsOperand)qs_operand_terminate( target->refs[ j ].coefficient,g->aef );
+}
+
+struct QsReflist qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
+	Pivot* target = g->components[ i ];
+
+	struct QsReflist result = { 0,NULL };
 
 	if( target ) {
-		result = malloc( sizeof (struct QsReflist) );
-		result->n_references = target->n_refs;
-		result->references = malloc( result->n_references*sizeof (struct QsReference) );
+		qs_pivot_graph_terminate( g,i );
+
+		result.n_references = target->n_refs;
+		result.references = malloc( result.n_references*sizeof (struct QsReference) );
 
 		int j;
 		for( j = 0; j<target->n_refs; j++ ) {
-			QsTerminal wait;
-			target->refs[ j ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef ) );
-
-			result->references[ j ].head = target->refs[ j ].head;
-			result->references[ j ].coefficient = qs_terminal_wait( wait );
+			result.references[ j ].head = target->refs[ j ].head;
+			result.references[ j ].coefficient = qs_terminal_wait( (QsTerminal)target->refs[ j ].coefficient );
 		}
 	}
 
@@ -391,35 +398,17 @@ struct QsReflist* qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
 }	
 
 void qs_pivot_graph_save( QsPivotGraph g,QsComponent i ) {
-	Pivot* target = g->components[ i ];
-
-	if( !target )
-		return;
-
-	struct QsReflist l = { target->n_refs,malloc( target->n_refs*sizeof (struct QsReference) ) };
-
-	int j;
-	for( j = 0; j<target->n_refs; j++ )
-		target->refs[ j ].coefficient = (QsOperand)qs_operand_terminate( target->refs[ j ].coefficient,g->aef );
-
-	for( j = 0; j<target->n_refs; j++ )
-		l.references[ j ]= (struct QsReference){ target->refs[ j ].head,qs_terminal_wait( (QsTerminal)target->refs[ j ].coefficient ) };
-
-	g->saver( g->save_data,i,l,target->meta );
-
-	free( l.references );
+	struct QsReflist l = qs_pivot_graph_wait( g,i );
+	if( l.references ) {
+		g->saver( g->save_data,i,l,g->components[ i ]->meta );
+		free( l.references );
+	}
 }
 
 void qs_pivot_graph_destroy( QsPivotGraph g ) {
 	int j;
-	for( j = 0; j<g->n_components; j++ ) {
-		Pivot* target = g->components[ j ];
-		if( target ) {
-			int k;
-			for( k = 0; k<target->n_refs; k++ )
-				target->refs[ k ].coefficient = (QsOperand)qs_operand_terminate( target->refs[ k ].coefficient,g->aef );
-		}
-	}
+	for( j = 0; j<g->n_components; j++ )
+		qs_pivot_graph_terminate( g,j );
 
 	for( j = 0; j<g->n_components; j++ )
 		if( g->components[ j ] ) {

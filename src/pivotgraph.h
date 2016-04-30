@@ -30,8 +30,9 @@ typedef struct QsPivotGraph* QsPivotGraph;
 
 QsPivotGraph qs_pivot_graph_new_with_size( QsAEF,void*,QsLoadFunction,void*,QsSaveFunction,unsigned,unsigned );
 void qs_pivot_graph_solve( QsPivotGraph,QsComponent,volatile sig_atomic_t* );
-struct QsReflist* qs_pivot_graph_wait( QsPivotGraph,QsComponent );
+struct QsReflist qs_pivot_graph_wait( QsPivotGraph,QsComponent );
 void qs_pivot_graph_destroy( QsPivotGraph );
 void qs_pivot_graph_save( QsPivotGraph,QsComponent );
+void qs_pivot_graph_terminate( QsPivotGraph,QsComponent );
 
 #endif
