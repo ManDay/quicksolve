@@ -43,9 +43,6 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 	Pivot* next_target = NULL;
 	unsigned next_i;
 
-	if( !waiter )
-		waiter = qs_terminal_group_new( target->n_refs );
-
 	int j = 0;
 	DBG_PRINT_2( "Determining next target in %i\n",rc,order );
 	while( !next_target && j<target->n_refs ) {
@@ -62,6 +59,9 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 				QsTerminal wait;
 				target->refs[ j ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef ) );
 
+				if( !waiter )
+					waiter = qs_terminal_group_new( target->n_refs );
+
 				qs_terminal_group_push( waiter,wait );
 			}
 
@@ -74,50 +74,51 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 			load_pivot( g,i );
 		}
 
-		do {
-			QsCoefficient val;
-			QsTerminal val_term;
+		if( waiter )
+			do {
+				QsCoefficient val;
+				QsTerminal val_term;
 
-			if( ( val = qs_terminal_group_pop( waiter,&val_term ) ) ) {
-				unsigned candidate_j;
-				for( candidate_j = 0; candidate_j<target->n_refs; candidate_j++ )
-					if( target->refs[ candidate_j ].coefficient==(QsOperand)val_term )
-						break;
+				if( ( val = qs_terminal_group_pop( waiter,&val_term ) ) ) {
+					unsigned candidate_j;
+					for( candidate_j = 0; candidate_j<target->n_refs; candidate_j++ )
+						if( target->refs[ candidate_j ].coefficient==(QsOperand)val_term )
+							break;
 
-				DBG_PRINT_2( " Operand %i is ready (%i remaining)\n",rc,candidate_j,qs_terminal_group_count( waiter ) );
+					DBG_PRINT_2( " Operand %i is ready (%i remaining)\n",rc,candidate_j,qs_terminal_group_count( waiter ) );
 
-				if( qs_coefficient_is_zero( val ) ) {
-					DBG_PRINT_2( " Deleting operand %p\n",rc,target->refs[ candidate_j ].coefficient );
-					/* The coefficient was found to be zero, we seize the
-					 * opportunity and delete the associated Operand. For that we
-					 * move the current operand (which was taken care of at this
-					 * point) into the deleted operands's place and the last
-					 * operand into the current operand's place and do NOT advance
-					 * j so as to not to have to reset j to the deleted operands
-					 * place, which would induce redundant passes. */
-					qs_operand_unref( target->refs[ candidate_j ].coefficient );
-					target->refs[ candidate_j ] = target->refs[ j ];
-					target->refs[ j ]= target->refs[ target->n_refs - 1 ];
-					target->n_refs--;
+					if( qs_coefficient_is_zero( val ) ) {
+						DBG_PRINT_2( " Deleting operand %p\n",rc,target->refs[ candidate_j ].coefficient );
+						/* The coefficient was found to be zero, we seize the
+						 * opportunity and delete the associated Operand. For that we
+						 * move the current operand (which was taken care of at this
+						 * point) into the deleted operands's place and the last
+						 * operand into the current operand's place and do NOT advance
+						 * j so as to not to have to reset j to the deleted operands
+						 * place, which would induce redundant passes. */
+						qs_operand_unref( target->refs[ candidate_j ].coefficient );
+						target->refs[ candidate_j ] = target->refs[ j ];
+						target->refs[ j ]= target->refs[ target->n_refs - 1 ];
+						target->n_refs--;
 
-					if( j_self==j )
-						j_self = candidate_j;
-					else if( j_self==target->n_refs )
-						j_self = j;
+						if( j_self==j )
+							j_self = candidate_j;
+						else if( j_self==target->n_refs )
+							j_self = j;
 
-					j_next = j;
-				} else {
-					next_i = target->refs[ candidate_j ].head;
-					next_target = load_pivot( g,next_i );
+						j_next = j;
+					} else {
+						next_i = target->refs[ candidate_j ].head;
+						next_target = load_pivot( g,next_i );
+					}
 				}
-			}
 
-			if( !next_target && j_next==target->n_refs ) {
-				DBG_PRINT_2( " No more additional candidates, waiting\n",rc );
-				qs_terminal_group_wait( waiter );
-				j = j_next - 1;
-			}
-		} while( !next_target && j_next==target->n_refs && qs_terminal_group_count( waiter ) );
+				if( !next_target && j_next==target->n_refs ) {
+					DBG_PRINT_2( " No more additional candidates, waiting\n",rc );
+					qs_terminal_group_wait( waiter );
+					j = j_next - 1;
+				}
+			} while( !next_target && j_next==target->n_refs && qs_terminal_group_count( waiter ) );
 		j = j_next;
 	}
 
@@ -134,7 +135,9 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 		DBG_PRINT( "}\n",rc );
 
 		if( *terminate ) {
-			qs_terminal_group_destroy( waiter );
+			if( waiter )
+				qs_terminal_group_destroy( waiter );
+
 			return;
 		}
 
@@ -159,7 +162,8 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 
 		czakon_prime( g,i,despair,rc,terminate,waiter );
 	} else {
-		qs_terminal_group_destroy( waiter );
+		if( waiter )
+			qs_terminal_group_destroy( waiter );
 
 		/* If we ended up here because of back-substitution, solving is true
 		 * but if we haven't made any changes, solved is still true */
