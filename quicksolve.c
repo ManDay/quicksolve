@@ -18,11 +18,12 @@
 #define STR( X ) #X
 #define XSTR( X ) STR( X )
 
-const char const usage[ ]= "[-p <Threads>] [-a <Identity limit>] [-w <Usage limit>] [<Symbol>[=<Subsitution>] ...]\n\n"
+const char const usage[ ]= "[-p <Threads>] [-a <Identity limit>] [-w <Usage limit>] [-q] [<Symbol>[=<Subsitution>] ...]\n\n"
 	"<Threads>: Number of evaluators in parallel calculation [Default " XSTR( DEF_NUM_PROCESSORS ) "]\n"
 	"<Identity limit>: Upper bound on the number of identities in the system [Default " XSTR( DEF_PREALLOC ) "]\n"
 	"<Usage limit>: Maximum number of identities to keep in memory or 0 if unlimited [Default " XSTR( DEF_USAGE_LIMIT ) "]\n\n"
 	"Reads list of integrals from stdin and produces FORM fill statements for those integrals in terms of master integrals to stdout. All occurring symbols from the identity databases must be registered as positional arguments and can optionally be chosen to be replaced.\n"
+	"If -q is given, Quicksolve will not wait for finalization of each solution to print them but will only report that a solution has been formally obtained and may possibly still be evaluating.\n\n"
 	"For further documentation see the manual that came with Quicksolve";
 
 volatile sig_atomic_t terminate = false;
@@ -38,11 +39,12 @@ int main( const int argc,char* const argv[ ] ) {
 	unsigned usage_limit = DEF_USAGE_LIMIT;
 	unsigned prealloc = DEF_PREALLOC;
 	bool help = false;
-	FILE* infile = stdin;
-	FILE* outfile = stdout;
+	FILE* const infile = stdin;
+	FILE* const outfile = stdout;
+	bool quiet = false;
 
 	int opt;
-	while( ( opt = getopt( argc,argv,"p:a:w:h" ) )!=-1 ) {
+	while( ( opt = getopt( argc,argv,"p:a:w:hq" ) )!=-1 ) {
 		char* endptr;
 		switch( opt ) {
 		case 'p':
@@ -59,6 +61,9 @@ int main( const int argc,char* const argv[ ] ) {
 			break;
 		case 'h':
 			help = true;
+			break;
+		case 'q':
+			quiet = true;
 			break;
 		}
 	}
@@ -109,34 +114,41 @@ int main( const int argc,char* const argv[ ] ) {
 
 			if( terminate )
 				break;
+			
+			char* head;
+			qs_integral_print( qs_integral_mgr_peek( mgr,id ),&head );
 
-			struct QsReflist result = qs_pivot_graph_wait( p,id );
+			if( quiet )
+				fprintf( outfile,"%s\n",head );
+			else {
+				struct QsReflist result = qs_pivot_graph_wait( p,id );
 
-			if( result.references ) {
-				char* head,* coeff;
+				if( result.references ) {
+					char* head,* coeff;
 
-				qs_integral_print( qs_integral_mgr_peek( mgr,id ),&head );
-				fprintf( outfile,"fill %s =",head );
-				free( head );
+					fprintf( outfile,"fill %s =",head );
 
-				if( result.n_references>1 ) {
-					int j;
-					for( j = 0; j<result.n_references; j++ )
-						if( result.references[ j ].head!=id ) {
-							qs_integral_print( qs_integral_mgr_peek( mgr,result.references[ j ].head ),&head );
-							qs_coefficient_print( result.references[ j ].coefficient,&coeff );
-							fprintf( outfile,"\n + %s * (%s)",head,coeff );
-							free( coeff );
-							free( head );
-						}
-				} else
-					fprintf( outfile,"\n0" );
+					if( result.n_references>1 ) {
+						int j;
+						for( j = 0; j<result.n_references; j++ )
+							if( result.references[ j ].head!=id ) {
+								qs_integral_print( qs_integral_mgr_peek( mgr,result.references[ j ].head ),&head );
+								qs_coefficient_print( result.references[ j ].coefficient,&coeff );
+								fprintf( outfile,"\n + %s * (%s)",head,coeff );
+								free( coeff );
+								free( head );
+							}
+					} else
+						fprintf( outfile,"\n0" );
 
-				fprintf( outfile,"\n;\n" );
-				fflush( outfile );
+					fprintf( outfile,"\n;\n" );
+					fflush( outfile );
 
-				free( result.references );
+					free( result.references );
+				}
 			}
+
+			free( head );
 		} else
 			fprintf( stderr,"Warning: Could not parse '%s'\n",buffer );
 	}
