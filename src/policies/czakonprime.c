@@ -203,23 +203,4 @@ void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,volatile sig_atomic_t* c
 	DBG_PRINT( "Solving for Pivot %i {\n",0,g->components[ i ]->meta.order );
 	czakon_prime( g,i,1,1,terminate,NULL );
 	DBG_PRINT( "}\n",0 );
-
-	// Reassert i is inside of USAGE_MARGIN
-	load_pivot( g,i );
-
-	Pivot* const target = g->components[ i ];
-
-	// Clean up zeroes from the last steps
-	int j = 0;
-	while( j<target->n_refs ) {
-		QsTerminal wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef );
-		target->refs[ j ].coefficient = (QsOperand)wait;
-		QsCoefficient val = qs_terminal_wait( wait );
-
-		if( qs_coefficient_is_zero( val ) ) {
-			qs_operand_unref( target->refs[ j ].coefficient );
-			target->refs[ j ]= target->refs[ --( target->n_refs ) ];
-		} else
-			j++;
-	}
 }
