@@ -28,14 +28,11 @@
 #include <unistd.h>
 
 static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsigned rc,volatile sig_atomic_t* const terminate,QsTerminalGroup waiter ) {
-	Pivot* target = load_pivot( g,i );
-
-	if( !target )
-		return;
+	/* Assumes pivot was within USAGE_MARGIN when czakon_prime was called
+	 */
+	Pivot* target = g->components[ i ];
 
 	const unsigned order = target->meta.order;
-
-	target->meta.consideration++;
 
 	bool self_found = false;
 	unsigned j_self = 0;
@@ -45,12 +42,12 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 
 	int j = 0;
 	DBG_PRINT_2( "Determining next target in %i\n",rc,order );
-	while( !next_target && j<target->n_refs ) {
+	while( !*terminate && !next_target && j<target->n_refs ) {
 		int j_next = j + 1;
 		Pivot* candidate;
 		if( ( candidate = load_pivot( g,target->refs[ j ].head ) ) ) {
-			const bool suitable_besides_not_self = ( candidate->meta.solved || candidate->meta.order<order )||( despair &&( despair>candidate->meta.consideration ) );
-	
+			const bool suitable_besides_not_self = ( candidate->meta.solved || candidate->meta.order<order )||( despair &&( despair>=candidate->meta.consideration ) );
+
 			if( target->refs[ j ].head==i ) {
 				self_found = true;
 				j_self = j;
@@ -76,6 +73,12 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 
 		if( waiter )
 			do {
+				if( *terminate ) {
+					qs_terminal_group_destroy( waiter );
+
+					return;
+				}
+
 				QsCoefficient val;
 				QsTerminal val_term;
 
@@ -131,9 +134,18 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 		target->meta.touched = false;
 
 		DBG_PRINT( "Eliminating %i from %i {\n",rc,next_target->meta.order,order );
+
+		load_pivot( g,next_i );
+
+		g->components[ next_i ]->meta.consideration++;
 		czakon_prime( g,next_i,0,rc + 1,terminate,NULL );
+		g->components[ next_i ]->meta.consideration--;
+
 		DBG_PRINT( "}\n",rc );
 
+		/* If termination was requested, the solver possibly returned
+		 * without normalization and we may not attempt to relay the pivot
+		 */
 		if( *terminate ) {
 			if( waiter )
 				qs_terminal_group_destroy( waiter );
@@ -143,7 +155,6 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 
 		/* Reassert next_i and i are inside USAGE_MARGIN, update memory
 		 * location contrary to above! */
-		next_target = load_pivot( g,next_i );
 		target = load_pivot( g,i );
 
 		/* Further desperate recursions may have touched and modified the
@@ -165,6 +176,9 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 		if( waiter )
 			qs_terminal_group_destroy( waiter );
 
+		if( *terminate )
+			return;
+
 		/* If we ended up here because of back-substitution, solving is true
 		 * but if we haven't made any changes, solved is still true */
 		if( !target->meta.solved ) {
@@ -177,7 +191,6 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 					qs_pivot_graph_normalize( g,i );
 
 					target->meta.solved = true;
-					target->meta.consideration--;
 
 					return;
 				}
@@ -191,8 +204,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 			}
 			czakon_prime( g,i,despair + 1,rc + 1,terminate,NULL );
 			DBG_PRINT( "}\n",rc );
-		} else
-			target->meta.consideration--;
+		}
 	}
 }
 
@@ -201,6 +213,8 @@ void qs_pivot_graph_solve( QsPivotGraph g,QsComponent i,volatile sig_atomic_t* c
 		return;
 
 	DBG_PRINT( "Solving for Pivot %i {\n",0,g->components[ i ]->meta.order );
+	g->components[ i ]->meta.consideration = 1;
 	czakon_prime( g,i,1,1,terminate,NULL );
+	g->components[ i ]->meta.consideration = 0;
 	DBG_PRINT( "}\n",0 );
 }

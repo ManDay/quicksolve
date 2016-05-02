@@ -387,10 +387,18 @@ struct QsReflist qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
 		result.n_references = target->n_refs;
 		result.references = malloc( result.n_references*sizeof (struct QsReference) );
 
-		int j;
-		for( j = 0; j<target->n_refs; j++ ) {
+		int j = 0;
+		while( j<target->n_refs ) {
 			result.references[ j ].head = target->refs[ j ].head;
 			result.references[ j ].coefficient = qs_terminal_wait( (QsTerminal)target->refs[ j ].coefficient );
+
+			if( qs_coefficient_is_zero( result.references[ j ].coefficient ) ) {
+				qs_operand_unref( target->refs[ j ].coefficient );
+				target->refs[ j ]= target->refs[ target->n_refs - 1 ];
+				target->n_refs--;
+				result.n_references--;
+			} else
+				j++;
 		}
 	}
 

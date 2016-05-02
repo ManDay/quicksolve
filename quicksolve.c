@@ -115,28 +115,27 @@ int main( const int argc,char* const argv[ ] ) {
 			if( terminate )
 				break;
 			
-			char* head;
-			qs_integral_print( qs_integral_mgr_peek( mgr,id ),&head );
+			char* target;
+			qs_integral_print( qs_integral_mgr_peek( mgr,id ),&target );
 
 			if( quiet )
-				fprintf( outfile,"%s\n",head );
+				fprintf( outfile,"%s\n",target );
 			else {
 				struct QsReflist result = qs_pivot_graph_wait( p,id );
 
 				if( result.references ) {
-					char* head,* coeff;
-
-					fprintf( outfile,"fill %s =",head );
+					fprintf( outfile,"fill %s =",target );
 
 					if( result.n_references>1 ) {
 						int j;
 						for( j = 0; j<result.n_references; j++ )
 							if( result.references[ j ].head!=id ) {
+								char* head,* coeff;
+
 								qs_integral_print( qs_integral_mgr_peek( mgr,result.references[ j ].head ),&head );
 								qs_coefficient_print( result.references[ j ].coefficient,&coeff );
 								fprintf( outfile,"\n + %s * (%s)",head,coeff );
 								free( coeff );
-								free( head );
 							}
 					} else
 						fprintf( outfile,"\n0" );
@@ -148,7 +147,7 @@ int main( const int argc,char* const argv[ ] ) {
 				}
 			}
 
-			free( head );
+			free( target );
 		} else
 			fprintf( stderr,"Warning: Could not parse '%s'\n",buffer );
 	}
