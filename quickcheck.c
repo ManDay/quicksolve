@@ -82,7 +82,12 @@ int main( const int argc,char* const argv[ ] ) {
 					QsTerminalGroup checks = qs_terminal_group_new( qs_expression_n_terms( e ) );
 
 					for( k = 0; k<qs_expression_n_terms( e ); k++ ) {
-						QsOperand issue = (QsOperand)qs_operand_new_from_coefficient( qs_expression_coefficient( e,k ) );
+						QsCoefficient coeff = qs_expression_coefficient( e,k );
+						int l;
+						for( l = 0; l<n_substitutions; l++ )
+							qs_coefficient_substitute( coeff,substitutions[ l ].name,substitutions[ l ].value );
+
+						QsOperand issue = (QsOperand)qs_operand_new_from_coefficient( coeff );
 						qs_terminal_group_push( checks,qs_operand_bake( 1,&issue,aef,QS_OPERATION_ADD ) );
 
 						qs_operand_unref( issue );
