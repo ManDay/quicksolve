@@ -88,9 +88,7 @@ int main( const int argc,char* const argv[ ] ) {
 		char* symbol = strtok( argv[ j ],"=" );
 		char* value = strtok( NULL,"" );
 
-		qs_evaluator_options_add( fermat_options,symbol );
-		if( value )
-			qs_integral_mgr_add_substitution( mgr,symbol,value );
+		qs_evaluator_options_add( fermat_options,symbol,value );
 	}
 
 

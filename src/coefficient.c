@@ -32,30 +32,46 @@ struct QsEvaluator {
 struct QsEvaluatorOptions {
 	unsigned n_symbols;
 	char** symbols;
+	char** substitutions;
 };
 
 QsEvaluatorOptions qs_evaluator_options_new( ) {
 	QsEvaluatorOptions result = malloc( sizeof (struct QsEvaluatorOptions) );
 	result->n_symbols = 0;
 	result->symbols = malloc( 0 );
+	result->substitutions = malloc( 0 );
 	return result;
 }
 	
 void qs_evaluator_options_add( QsEvaluatorOptions o,const char* first, ... ) {
 	const char* name = first;
+	va_list argp;
+	va_start( argp,first );
+	const char* substitution = va_arg( argp,char* );
+	va_end( argp );
 
 	o->symbols = realloc( o->symbols,( o->n_symbols + 1 )*sizeof (char*) );
+	o->substitutions = realloc( o->substitutions,( o->n_symbols + 1 )*sizeof (char*) );
+
 	o->symbols[ o->n_symbols ] = strdup( name );
+	if( substitution )
+		o->substitutions[ o->n_symbols ]= strdup( substitution );
+	else
+		o->substitutions[ o->n_symbols ]= NULL;
 
 	o->n_symbols++;
 }
 
 void qs_evaluator_options_destroy( QsEvaluatorOptions o ) {
 	int j;
-	for( j = 0; j<o->n_symbols; j++ )
+	for( j = 0; j<o->n_symbols; j++ ) {
 		free( o->symbols[ j ] );
+		if( o->substitutions[ j ] )
+			free( o->substitutions[ j ] );
+	}
 
 	free( o->symbols );
+	free( o->substitutions );
 	free( o );
 }
 
@@ -125,18 +141,6 @@ static void fermat_submit( QsEvaluator e,const char* data ) {
 	fputs( data,e->out );
 }
 
-static void register_symbols( QsEvaluator e,unsigned n_symbols,char* symbols[ ] ) {
-	int j;
-	for( j = 0; j<n_symbols; j++ ) {
-		fermat_submit( e,"&(J=" );
-		fermat_submit( e,symbols[ j ] );
-		fermat_submit( e,")\n" );
-	}
-
-	fermat_sync( e,NULL );
-}
-
-
 QsEvaluator qs_evaluator_new( QsCompoundDiscoverer discover,QsEvaluatorOptions opts ) {
 	QsEvaluator result = malloc( sizeof (struct QsEvaluator) );
 	result->discover = discover;
@@ -196,7 +200,21 @@ QsEvaluator qs_evaluator_new( QsCompoundDiscoverer discover,QsEvaluatorOptions o
 	fermat_submit( result,"&d\n0\n&M\n\n&U\n&E\n" );
 	fermat_sync( result,NULL );
 
-	register_symbols( result,opts->n_symbols,opts->symbols );
+	int j;
+	for( j = 0; j<opts->n_symbols; j++ ) {
+		if( opts->substitutions[ j ] ) {
+			fermat_submit( result,opts->symbols[ j ] );
+			fermat_submit( result,":=" );
+			fermat_submit( result,opts->substitutions[ j ] );
+			fermat_submit( result,"\n" );
+		} else {
+			fermat_submit( result,"&(J=" );
+			fermat_submit( result,opts->symbols[ j ] );
+			fermat_submit( result,")\n" );
+		}
+	}
+
+	fermat_sync( result,NULL );
 
 	return result;
 }
