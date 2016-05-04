@@ -153,6 +153,8 @@ int main( const int argc,char* const argv[ ] ) {
 	}
 
 	free( buffer );
+	
+	DBG_PRINT( "Solution done. Finalizing\n",0 );
 
 	qs_pivot_graph_destroy( p );
 	qs_aef_destroy( aef );
