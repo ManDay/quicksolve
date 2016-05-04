@@ -18,8 +18,6 @@ int main( const int argc,char* const argv[ ] ) {
 	// Parse arguments
 	bool help = false;
 	unsigned num_processors = 1;
-	unsigned n_substitutions = 0;
-	struct Substitution* substitutions = malloc( 0 );
 	QsEvaluatorOptions fermat_options = qs_evaluator_options_new( );
 
 	int opt;
@@ -34,11 +32,7 @@ int main( const int argc,char* const argv[ ] ) {
 			symbol = strtok( optarg,"=" );
 			value = strtok( NULL,"" );
 
-			qs_evaluator_options_add( fermat_options,symbol );
-			if( value ) {
-				substitutions = realloc( substitutions,++( n_substitutions )*sizeof (struct Substitution) );
-				substitutions[ n_substitutions - 1 ]= (struct Substitution){ strdup( symbol ),strdup( value ) };
-			}
+			qs_evaluator_options_add( fermat_options,symbol,value );
 			break;
 		}
 	}
@@ -83,10 +77,6 @@ int main( const int argc,char* const argv[ ] ) {
 
 					for( k = 0; k<qs_expression_n_terms( e ); k++ ) {
 						QsCoefficient coeff = qs_expression_coefficient( e,k );
-						int l;
-						for( l = 0; l<n_substitutions; l++ )
-							qs_coefficient_substitute( coeff,substitutions[ l ].name,substitutions[ l ].value );
-
 						QsOperand issue = (QsOperand)qs_operand_new_from_coefficient( coeff );
 						qs_terminal_group_push( checks,qs_operand_bake( 1,&issue,aef,QS_OPERATION_ADD ) );
 
