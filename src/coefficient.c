@@ -59,6 +59,16 @@ void qs_evaluator_options_destroy( QsEvaluatorOptions o ) {
 	free( o );
 }
 
+#if 0
+static void assert_sensible( const char* const restrict text ) {
+	int j;
+	for( j = 0; j<strlen( text ); j++ ) {
+		char glyph = text[ j ];
+		assert( glyph=='(' || glyph==')' || glyph=='*' || glyph=='+' || glyph=='-' || glyph=='/' ||( glyph>='A' && glyph<='Z' )||( glyph>='a' && glyph<='z' )||( glyph>='0' && glyph<='9' )|| glyph=='^' );
+	}
+}
+#endif
+
 static ssize_t fermat_sync( QsEvaluator e,char** out ) {
 	fputs( ";!!(';')\n",e->out );
 	fflush( e->out );
@@ -95,6 +105,11 @@ static ssize_t fermat_sync( QsEvaluator e,char** out ) {
 		len = w-result-1;
 	} else
 		free( result );
+
+#if 0
+	if( out )
+		assert_sensible( *out );
+#endif
 
 	char* wastebin = NULL;
 	getdelim( &wastebin,&read,'0',e->in );
@@ -221,6 +236,9 @@ static void submit_compound( QsEvaluator e,QsCompound x,QsOperation op ) {
 		} else {
 			QsCoefficient child = (QsCoefficient)child_raw;
 			fermat_submit( e,child->text );
+#if 0
+			assert_sensible( child->text );
+#endif
 		}
 
 		if( parens )
@@ -297,10 +315,9 @@ static char* replace_first( char* base,size_t offset,const char* pattern,const c
 		base_len =( base_len + replacement_len )- pattern_len;
 		base[ base_len ]= '\0';
 
-		base = replace_first( base,first + replacement_len,pattern,replacement,base_len,pattern_len,replacement_len );
-	}
-
-	return base;
+		return replace_first( base,first + replacement_len,pattern,replacement,base_len,pattern_len,replacement_len );
+	} else
+		return base;
 }
 
 void qs_coefficient_substitute( QsCoefficient c,const char* pattern,const char* replacement ) {
