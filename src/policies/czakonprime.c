@@ -143,6 +143,10 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 
 		DBG_PRINT( "}\n",rc );
 
+		/* Reassert next_i and i are inside USAGE_MARGIN, update memory
+		 * location contrary to above! */
+		target = load_pivot( g,i );
+
 		/* If termination was requested, the solver possibly returned
 		 * without normalization and we may not attempt to relay the pivot
 		 */
@@ -152,10 +156,6 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 
 			return;
 		}
-
-		/* Reassert next_i and i are inside USAGE_MARGIN, update memory
-		 * location contrary to above! */
-		target = load_pivot( g,i );
 
 		/* Further desperate recursions may have touched and modified the
 		 * current target, in which case the current data is obsolete. */
