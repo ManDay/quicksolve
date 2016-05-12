@@ -113,6 +113,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 					} else {
 						next_i = target->refs[ candidate_j ].head;
 						next_target = load_pivot( g,next_i );
+						assert( next_target );
 					}
 				}
 
