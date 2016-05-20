@@ -70,7 +70,7 @@ if( "${QS_JEMALLOC}" )
 	target_link_libraries( quicklib jemalloc )
 endif( )
 
-target_link_libraries( db "${KYOTO_LIB}" )
+target_link_libraries( db "${KYOTO_LIB}" stdc++ m z )
 
 include_directories( "${KYOTO_INCLUDE_DIR}" )
 

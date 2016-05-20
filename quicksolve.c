@@ -134,6 +134,7 @@ int main( const int argc,char* const argv[ ] ) {
 								qs_coefficient_print( result.references[ j ].coefficient,&coeff );
 								fprintf( outfile,"\n + %s * (%s)",head,coeff );
 								free( coeff );
+								free( head );
 							}
 					} else
 						fprintf( outfile,"\n0" );
