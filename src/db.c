@@ -185,6 +185,12 @@ void qs_db_set( QsDb db,struct QsDbEntry* e ) {
 	kcdbset( db->db,e->key,e->keylen,e->val,e->vallen );
 }
 
+void qs_db_append( QsDb db,struct QsDbEntry* e ) {
+	assert_open( db );
+
+	kcdbappend( db->db,e->key,e->keylen,e->val,e->vallen );
+}
+
 void qs_db_entry_destroy( struct QsDbEntry* e ) {
 	free( e->val );
 	free( e->key );

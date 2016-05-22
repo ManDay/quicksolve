@@ -284,7 +284,7 @@ void qs_evaluator_destroy( QsEvaluator e ) {
 	free( e );
 }
 
-QsCoefficient qs_coefficient_new_from_binary( const char* data,unsigned size ) {
+QsCoefficient qs_coefficient_new_from_binary( const char* data,size_t size ) {
 	QsCoefficient result = malloc( sizeof (QsCoefficient) );
 	result->text = malloc( size+1 );
 	memcpy( result->text,data,size );
@@ -293,15 +293,15 @@ QsCoefficient qs_coefficient_new_from_binary( const char* data,unsigned size ) {
 	return result;
 }
 
-unsigned qs_coefficient_to_binary( QsCoefficient c,char** out ) {
-	unsigned len = strlen( c->text );
+size_t qs_coefficient_to_binary( QsCoefficient c,char** out ) {
+	size_t len = strlen( c->text );
 	
 	*out = malloc( len );
 	memcpy( *out,c->text,len );
 	return len;
 }
 
-unsigned qs_coefficient_print( const QsCoefficient c,char** b ) {
+size_t qs_coefficient_print( const QsCoefficient c,char** b ) {
 	*b = strdup( c->text );
 	return strlen( c->text );
 }

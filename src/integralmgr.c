@@ -151,7 +151,7 @@ void qs_integral_mgr_save_expression( QsIntegralMgr m,QsComponent i,struct QsRef
 	entry->keylen = qs_integral_n_powers( in )*sizeof (QsPower);
 	entry->key = malloc( entry->keylen );
 	memcpy( entry->key,qs_integral_powers( in ),entry->keylen );
-	unsigned expression_size = qs_expression_to_binary( e,&entry->val );
+	size_t expression_size = qs_expression_to_binary( e,&entry->val );
 
 	if( meta.solved )
 		entry->vallen = expression_size;

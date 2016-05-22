@@ -1,6 +1,7 @@
 #ifndef _QS_COEFFICIENT_H_
 #define _QS_COEFFICIENT_H_
 
+#include <stddef.h>
 #include <stdbool.h>
 
 typedef enum {
@@ -52,12 +53,12 @@ void qs_evaluator_register( QsEvaluator,char* const[ ],unsigned );
 QsCoefficient qs_evaluator_evaluate( QsEvaluator,QsCompound,QsOperation );
 void qs_evaluator_destroy( QsEvaluator );
 
-QsCoefficient qs_coefficient_new_from_binary( const char*,unsigned );
-unsigned qs_coefficient_print( const QsCoefficient,char** );
+QsCoefficient qs_coefficient_new_from_binary( const char*,size_t );
+size_t qs_coefficient_print( const QsCoefficient,char** );
 bool qs_coefficient_is_one( const QsCoefficient );
 bool qs_coefficient_is_zero( const QsCoefficient );
 QsCoefficient qs_coefficient_one( bool );
-unsigned qs_coefficient_to_binary( QsCoefficient,char** );
+size_t qs_coefficient_to_binary( QsCoefficient,char** );
 void qs_coefficient_destroy( QsCoefficient );
 void qs_coefficient_substitute( QsCoefficient,const char*,const char* );
 

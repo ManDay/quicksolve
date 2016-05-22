@@ -44,8 +44,8 @@ QsExpression qs_expression_new_from_binary( const char* data,unsigned len,unsign
 }
 
 unsigned qs_expression_to_binary( QsExpression e,char** result ) {
-	unsigned size = 0;
-	unsigned allocated;
+	size_t size = 0;
+	size_t allocated;
 	char* content;
 
 	if( !e->n_terms ) {
@@ -56,10 +56,10 @@ unsigned qs_expression_to_binary( QsExpression e,char** result ) {
 	int j;
 	for( j = 0; j<e->n_terms; j++ ) {
 		char* int_bin,* coeff_bin;
-		unsigned int_len = qs_integral_to_binary( e->terms[ j ].integral,&int_bin );
-		unsigned coeff_len = qs_coefficient_to_binary( e->terms[ j ].coefficient,&coeff_bin );
+		size_t int_len = qs_integral_to_binary( e->terms[ j ].integral,&int_bin );
+		size_t coeff_len = qs_coefficient_to_binary( e->terms[ j ].coefficient,&coeff_bin );
 
-		unsigned new_size = size + int_len + coeff_len + 2*sizeof (int);
+		size_t new_size = size + int_len + coeff_len + 2*sizeof (int);
 
 		if( j==0 ) {
 			allocated = e->n_terms*( 2*sizeof (int) + int_len*2 + coeff_len*2 );

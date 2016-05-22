@@ -38,7 +38,7 @@ QsIntegral qs_integral_new_from_string( const char* s ) {
 	return result;
 }
 
-QsIntegral qs_integral_new_from_binary( const char* data,unsigned len ) {
+QsIntegral qs_integral_new_from_binary( const char* data,size_t len ) {
 	QsIntegral result = malloc( sizeof (struct QsIntegral) );
 
 	char* powers_base;
@@ -56,7 +56,7 @@ QsIntegral qs_integral_new_from_binary( const char* data,unsigned len ) {
 	return result;
 }
 
-unsigned qs_integral_to_binary( QsIntegral i,char** out ) {
+size_t qs_integral_to_binary( QsIntegral i,char** out ) {
 	int prot_len = asprintf( out,"PR%i",i->prototype );
 
 	*out = realloc( *out,prot_len+1+i->n_powers*sizeof (QsPower) );
@@ -73,7 +73,7 @@ unsigned qs_integral_to_binary( QsIntegral i,char** out ) {
  * @param[callee-allocates] Pointer to string
  * @return Length of written string
  */
-unsigned qs_integral_print( const QsIntegral i,char** b ) {
+size_t qs_integral_print( const QsIntegral i,char** b ) {
 	int len = asprintf( b,"PR%u(",i->prototype );
 
 	int j;
