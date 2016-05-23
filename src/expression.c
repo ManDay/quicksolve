@@ -45,14 +45,9 @@ QsExpression qs_expression_new_from_binary( const char* data,unsigned len,unsign
 
 unsigned qs_expression_to_binary( QsExpression e,char** result ) {
 	size_t size = 0;
-	size_t allocated;
-	char* content;
+	size_t allocated = 0;
+	char* content = malloc( 0 );
 
-	if( !e->n_terms ) {
-		*result = malloc( 0 );
-		return 0;
-	}
-	
 	int j;
 	for( j = 0; j<e->n_terms; j++ ) {
 		char* int_bin,* coeff_bin;
@@ -61,13 +56,8 @@ unsigned qs_expression_to_binary( QsExpression e,char** result ) {
 
 		size_t new_size = size + int_len + coeff_len + 2*sizeof (int);
 
-		if( j==0 ) {
-			allocated = e->n_terms*( 2*sizeof (int) + int_len*2 + coeff_len*2 );
-			content = malloc( allocated );
-		} else {
-			if( allocated<new_size )
-				content = realloc( content,new_size );
-		}
+		if( allocated<new_size )
+			content = realloc( content,new_size );
 
 		char* int_len_base = content + size;
 		char* int_bin_base = int_len_base + sizeof (int);
