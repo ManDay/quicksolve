@@ -11,7 +11,7 @@
  * time (necessary because of a bug which crashes everything when more
  * than a certain number (512) kyotocabinet databases are open).
  */
-#define MAX_OPEN_DBS 256
+#define MAX_OPEN_DBS 511
 
 static unsigned n_tracked_dbs;
 static unsigned cache_open_count;

@@ -197,7 +197,7 @@ QsEvaluator qs_evaluator_new( QsCompoundDiscoverer discover,QsEvaluatorOptions o
 			fprintf( stderr,"Could not spawn fermat instance!\n" );
 	}
 
-	fermat_submit( result,"&d\n0\n&M\n\n&U\n&E\n&t\n" );
+	fermat_submit( result,"&d\n0\n&M\n\n&(U=1)\n&(E=0)\n&(t=0)\n" );
 	fermat_sync( result,NULL );
 
 	int j;
