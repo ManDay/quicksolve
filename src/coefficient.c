@@ -97,7 +97,7 @@ static ssize_t fermat_sync( QsEvaluator e,char** out ) {
 #ifdef DBG_EVALFILE
 	fputs( "\nSYNC OUTPUT: ",e->fermat_log );
 	fputs( result,e->fermat_log );
-	fputs( "\n",e->fermat_log );
+	fputs( "\nSYNC INPUT: ",e->fermat_log );
 
 	if( !fermat_no_error ) {
 		fprintf( stderr,"Error: Error in result of FERMAT PID '%i'\n",e->cas );
@@ -197,7 +197,7 @@ QsEvaluator qs_evaluator_new( QsCompoundDiscoverer discover,QsEvaluatorOptions o
 			fprintf( stderr,"Could not spawn fermat instance!\n" );
 	}
 
-	fermat_submit( result,"&d\n0\n&M\n\n&(U=1)\n&(E=0)\n&(t=0)\n" );
+	fermat_submit( result,"&d\n0\n&M\n\n&(U=1)\n&(E=0)\n&(t=0)\n&(_t=0)\n&(_s=0)" );
 	fermat_sync( result,NULL );
 
 	int j;
