@@ -86,12 +86,12 @@ static void assert_sensible( const char* const restrict text ) {
 #endif
 
 static ssize_t fermat_sync( QsEvaluator e,char** out ) {
-	fputs( ";!!(';')\n",e->out );
+	fputs( ";!!('#')\n",e->out );
 	fflush( e->out );
 
 	size_t read = 0;
 	char* result = NULL;
-	ssize_t len = getdelim( &result,&read,';',e->in );
+	ssize_t len = getdelim( &result,&read,'#',e->in );
 
 	const bool fermat_no_error = !( strstr( result,"Error" )|| strstr( result,"error" )|| strstr( result,"ERROR" )|| strstr( result,"***" ) );
 #ifdef DBG_EVALFILE
