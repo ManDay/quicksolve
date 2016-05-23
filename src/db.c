@@ -22,11 +22,15 @@ struct QsDb {
 	char* pathname;
 	enum QsDbMode mode;
 	KCDB* db;
+	unsigned n_cursors;
+	QsDbCursor* cursors;
 };
 
 struct QsDbCursor {
 	QsDb db;
 	KCCUR* cur;
+	char* key; ///< The previous key
+	size_t keylen; ///< The previous key's length
 };
 
 static bool open_db( QsDb db ) {
@@ -83,12 +87,31 @@ static bool assert_open( QsDb db ) {
 		int j;
 		for( j = 0; j<n_tracked_dbs; j++ )
 			if( tracked_dbs[ j ]->db ) {
+				// Kill all cursor
+				int k;
+				for( k = 0; k<db->n_cursors; k++ )
+					kccurdel( db->cursors[ k ]->cur );
+
 				close_db( tracked_dbs[ j ] );
 				break;
 			}
 	}
 
-	return open_db( db );
+	if( open_db( db ) ) {
+		// Restore all cursors
+		int k;
+		for( k = 0; k<db->n_cursors; k++ ) {
+			QsDbCursor cur = db->cursors[ k ];
+			cur->cur = kcdbcursor( db->db );
+			if( cur->key ) {
+				kccurjumpkey( cur->cur,cur->key,cur->keylen );
+				kccurstep( cur->cur );
+			} else
+				qs_db_cursor_reset( cur );
+		}
+		return true;
+	}	else
+		return false;
 }
 
 void qs_db_destroy( QsDb db ) {
@@ -98,11 +121,23 @@ void qs_db_destroy( QsDb db ) {
 		close_db( db );
 
 	free( db->pathname );
+	free( db->cursors );
 	free( db );
 }
 
 void qs_db_cursor_destroy( QsDbCursor cur ) {
-	kccurdel( cur->cur );
+	if( cur->cur )
+		kccurdel( cur->cur );
+	if( cur->key )
+		kcfree( cur->key );
+
+	int j;
+	for( j = 0; j<cur->db->n_cursors; j++ )
+		if( cur->db->cursors[ j ]==cur ) {
+			cur->db->n_cursors--;
+			cur->db->cursors[ j ]= cur->db->cursors[ cur->db->n_cursors ];
+		}
+
 	free( cur );
 }
 
@@ -111,6 +146,8 @@ QsDb qs_db_new( char* pathname,enum QsDbMode mode ) {
 	result->pathname = strdup( pathname );
 	result->mode = mode;
 	result->db = NULL;
+	result->n_cursors = 0;
+	result->cursors = malloc( 0 );
 
 	track_db( result );
 
@@ -121,12 +158,20 @@ QsDb qs_db_new( char* pathname,enum QsDbMode mode ) {
 	return NULL;
 }
 
-/* TODO: Make cursors work with tracked DBs */
 QsDbCursor qs_db_cursor_new( QsDb db ) {
+	assert( assert_open( db ) );
+
 	QsDbCursor result = malloc( sizeof (struct QsDbCursor) );
+
 	result->db = db;
 	result->cur = kcdbcursor( db->db );
+	result->key = NULL;
+
 	qs_db_cursor_reset( result );
+
+	db->n_cursors++;
+	db->cursors = realloc( db->cursors,db->n_cursors*sizeof (QsDbCursor) );
+	db->cursors[ db->n_cursors - 1 ]= result;
 
 	return result;
 }
@@ -134,29 +179,34 @@ QsDbCursor qs_db_cursor_new( QsDb db ) {
 QsDbCursor qs_db_cursor_reset( QsDbCursor cur ) {
 	kccurjump( cur->cur );
 
+	if( cur->key ) {
+		kcfree( cur->key );
+		cur->key = NULL;
+	}
+
 	return cur;
 }
 
 struct QsDbEntry* qs_db_cursor_next( QsDbCursor cur ) {
-	char* keydata;
 	const char* val;
-	size_t keylen,vallen;
+	size_t vallen;
 
-	keydata = kccurget( cur->cur,&keylen,&val,&vallen,true );
+	if( cur->key )
+		kcfree( cur->key );
 
-	if( !keydata )
+	cur->key = kccurget( cur->cur,&cur->keylen,&val,&vallen,true );
+
+	if( !cur->key )
 		return NULL;
 
 	struct QsDbEntry* result = malloc( sizeof (struct QsDbEntry) );
-	result->key = malloc( keylen );
-	result->keylen = keylen;
+	result->key = malloc( cur->keylen );
+	result->keylen = cur->keylen;
 	result->val = malloc( vallen );
 	result->vallen = vallen;
 
-	memcpy( result->key,keydata,keylen );
+	memcpy( result->key,cur->key,cur->keylen );
 	memcpy( result->val,val,vallen );
-
-	kcfree( keydata );
 
 	return result;
 }
