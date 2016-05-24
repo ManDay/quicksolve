@@ -22,6 +22,13 @@ struct QsEvaluator {
 	int out_fd;
 	pid_t cas;
 
+	unsigned n_symbols;
+	char** symbols;
+	char** substitutions;
+
+	unsigned evaluations;
+	unsigned max_evaluations;
+
 	QsCompoundDiscoverer discover;
 
 #ifdef DBG_EVALFILE
@@ -30,6 +37,7 @@ struct QsEvaluator {
 };
 
 struct QsEvaluatorOptions {
+	unsigned cycle;
 	unsigned n_symbols;
 	char** symbols;
 	char** substitutions;
@@ -38,6 +46,7 @@ struct QsEvaluatorOptions {
 QsEvaluatorOptions qs_evaluator_options_new( ) {
 	QsEvaluatorOptions result = malloc( sizeof (struct QsEvaluatorOptions) );
 	result->n_symbols = 0;
+	result->cycle = 0;
 	result->symbols = malloc( 0 );
 	result->substitutions = malloc( 0 );
 	return result;
@@ -47,19 +56,25 @@ void qs_evaluator_options_add( QsEvaluatorOptions o,const char* first, ... ) {
 	const char* name = first;
 	va_list argp;
 	va_start( argp,first );
-	const char* substitution = va_arg( argp,char* );
+
+	if( !strcmp( name,"#" ) ) {
+		o->cycle = va_arg( argp,unsigned );
+	} else {
+		const char* substitution = va_arg( argp,char* );
+
+		o->symbols = realloc( o->symbols,( o->n_symbols + 1 )*sizeof (char*) );
+		o->substitutions = realloc( o->substitutions,( o->n_symbols + 1 )*sizeof (char*) );
+
+		o->symbols[ o->n_symbols ] = strdup( name );
+		if( substitution )
+			o->substitutions[ o->n_symbols ]= strdup( substitution );
+		else
+			o->substitutions[ o->n_symbols ]= NULL;
+
+		o->n_symbols++;
+	}
+
 	va_end( argp );
-
-	o->symbols = realloc( o->symbols,( o->n_symbols + 1 )*sizeof (char*) );
-	o->substitutions = realloc( o->substitutions,( o->n_symbols + 1 )*sizeof (char*) );
-
-	o->symbols[ o->n_symbols ] = strdup( name );
-	if( substitution )
-		o->substitutions[ o->n_symbols ]= strdup( substitution );
-	else
-		o->substitutions[ o->n_symbols ]= NULL;
-
-	o->n_symbols++;
 }
 
 void qs_evaluator_options_destroy( QsEvaluatorOptions o ) {
@@ -141,10 +156,9 @@ static void fermat_submit( QsEvaluator e,const char* data ) {
 	fputs( data,e->out );
 }
 
-QsEvaluator qs_evaluator_new( QsCompoundDiscoverer discover,QsEvaluatorOptions opts ) {
-	QsEvaluator result = malloc( sizeof (struct QsEvaluator) );
-	result->discover = discover;
-	
+static void init_fermat( QsEvaluator e ) {
+	e->evaluations = 0;
+
 	int in_pipe[ 2 ],out_pipe[ 2 ];
 
 	// US <- THEM
@@ -152,29 +166,19 @@ QsEvaluator qs_evaluator_new( QsCompoundDiscoverer discover,QsEvaluatorOptions o
 	// THEM <- US
 	pipe( out_pipe );
 
-	result->cas = fork( );
-	if( result->cas ) {
+	e->cas = fork( );
+	if( e->cas ) {
 		// Ourselves
 		close( in_pipe[ 1 ] );
 		close( out_pipe[ 0 ] );
 
-		result->in_fd = in_pipe[ 0 ];
-		result->in = fdopen( in_pipe[ 0 ],"r" );
-		//setbuf( result->in,NULL );
+		e->in_fd = in_pipe[ 0 ];
+		e->in = fdopen( in_pipe[ 0 ],"r" );
+		//setbuf( e->in,NULL );
 
-		result->out_fd = out_pipe[ 1 ];
-		result->out = fdopen( out_pipe[ 1 ],"w" );
-		//setbuf( result->out,NULL );
-
-#ifdef DBG_EVALFILE
-		char* logname;
-		asprintf( &logname,DBG_EVALFILE "%i",result->cas );
-		if( !( result->fermat_log = fopen( logname,"w" ) ) ) {
-			fprintf( stderr,"Error: Could not open logfile '%s' for writing\n",logname );
-			abort( );
-		}
-		free( logname );
-#endif
+		e->out_fd = out_pipe[ 1 ];
+		e->out = fdopen( out_pipe[ 1 ],"w" );
+		//setbuf( e->out,NULL );
 	} else {
 		// Remote
 		close( in_pipe[ 0 ] );
@@ -197,24 +201,55 @@ QsEvaluator qs_evaluator_new( QsCompoundDiscoverer discover,QsEvaluatorOptions o
 			fprintf( stderr,"Could not spawn fermat instance!\n" );
 	}
 
-	fermat_submit( result,"&d\n0\n&M\n\n&(U=1)\n&(E=0)\n&(t=0)\n&(_t=0)\n&(_s=0)" );
-	fermat_sync( result,NULL );
+	fermat_submit( e,"&d\n0\n&M\n\n&(U=1)\n&(E=0)\n&(t=0)\n&(_t=0)\n&(_s=0)" );
+	fermat_sync( e,NULL );
 
 	int j;
-	for( j = 0; j<opts->n_symbols; j++ ) {
-		if( opts->substitutions[ j ] ) {
-			fermat_submit( result,opts->symbols[ j ] );
-			fermat_submit( result,":=" );
-			fermat_submit( result,opts->substitutions[ j ] );
-			fermat_submit( result,"\n" );
+	for( j = 0; j<e->n_symbols; j++ ) {
+		if( e->substitutions[ j ] ) {
+			fermat_submit( e,e->symbols[ j ] );
+			fermat_submit( e,":=" );
+			fermat_submit( e,e->substitutions[ j ] );
+			fermat_submit( e,"\n" );
 		} else {
-			fermat_submit( result,"&(J=" );
-			fermat_submit( result,opts->symbols[ j ] );
-			fermat_submit( result,")\n" );
+			fermat_submit( e,"&(J=" );
+			fermat_submit( e,e->symbols[ j ] );
+			fermat_submit( e,")\n" );
 		}
 	}
 
-	fermat_sync( result,NULL );
+	fermat_sync( e,NULL );
+}
+
+QsEvaluator qs_evaluator_new( QsCompoundDiscoverer discover,QsEvaluatorOptions opts ) {
+	QsEvaluator result = malloc( sizeof (struct QsEvaluator) );
+	result->discover = discover;
+	result->max_evaluations = opts->cycle;
+	
+#ifdef DBG_EVALFILE
+	char* logname;
+	asprintf( &logname,DBG_EVALFILE "%p",result );
+	if( !( result->fermat_log = fopen( logname,"w" ) ) ) {
+		fprintf( stderr,"Error: Could not open logfile '%s' for writing\n",logname );
+		abort( );
+	}
+	free( logname );
+#endif
+
+	result->symbols = malloc( opts->n_symbols*sizeof (char*) );
+	result->substitutions = malloc( opts->n_symbols*sizeof (char*) );
+	result->n_symbols = opts->n_symbols;
+
+	int j;
+	for( j = 0; j<opts->n_symbols; j++ ) {
+		result->symbols[ j ]= strdup( opts->symbols[ j ] );
+		if( opts->substitutions[ j ] )
+			result->substitutions[ j ]= strdup( opts->substitutions[ j ] );
+		else
+			result->substitutions[ j ]= NULL;
+	}
+
+	init_fermat( result );
 
 	return result;
 }
@@ -268,19 +303,42 @@ QsCoefficient qs_coefficient_one( bool minus ) {
 	return qs_coefficient_new_from_binary( minus?"-1":"1",minus?2:1 );
 }
 
+static void finish_fermat( QsEvaluator e ) {
+	kill( e->cas,SIGTERM );
+	fclose( e->in );
+	fclose( e->out );
+}
+
 QsCoefficient qs_evaluator_evaluate( QsEvaluator e,QsCompound x,QsOperation op ) {
 	QsCoefficient result = malloc( sizeof (struct QsCoefficient) );
 
 	submit_compound( e,x,op );
 	fermat_sync( e,&result->text );
 
+	if( e->evaluations++>e->max_evaluations ) {
+		finish_fermat( e );
+		init_fermat( e );
+	}
+
 	return result;
 }
 
 void qs_evaluator_destroy( QsEvaluator e ) {
-	kill( e->cas,SIGTERM );
-	fclose( e->in );
-	fclose( e->out );
+	finish_fermat( e );
+
+	int j;
+	for( j = 0; j<e->n_symbols; j++ ) {
+		free( e->symbols[ j ] );
+		if( e->substitutions[ j ] )
+			free( e->substitutions[ j ] );
+	}
+
+#ifdef DBG_EVALFILE
+	fclose( e->fermat_log );
+#endif
+
+	free( e->symbols );
+	free( e->substitutions );
 	free( e );
 }
 

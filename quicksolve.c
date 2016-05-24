@@ -18,9 +18,10 @@
 #define STR( X ) #X
 #define XSTR( X ) STR( X )
 
-const char const usage[ ]= "[-p <Threads>] [-a <Identity limit>] [-w <Usage limit>] [-q] [<Symbol>[=<Subsitution>] ...]\n\n"
+const char const usage[ ]= "[-p <Threads>] [-k <Fermat cycle>] [-a <Identity limit>] [-w <Usage limit>] [-q] [<Symbol>[=<Subsitution>] ...]\n\n"
 	"<Threads>: Number of evaluators in parallel calculation [Default " XSTR( DEF_NUM_PROCESSORS ) "]\n"
 	"<Identity limit>: Upper bound on the number of identities in the system [Default " XSTR( DEF_PREALLOC ) "]\n"
+	"<Fermat cycle>: If greater than 0, reinitializes the FERMAT backend every that many evaluations\n"
 	"<Usage limit>: Maximum number of identities to keep in memory or 0 if unlimited [Default " XSTR( DEF_USAGE_LIMIT ) "]\n\n"
 	"Reads list of integrals from stdin and produces FORM fill statements for those integrals in terms of master integrals to stdout. All occurring symbols from the identity databases must be registered as positional arguments and can optionally be chosen to be replaced.\n"
 	"If -q is given, Quicksolve will not wait for finalization of each solution to print them but will only report that a solution has been formally obtained and may possibly still be evaluating.\n\n"
@@ -29,7 +30,6 @@ const char const usage[ ]= "[-p <Threads>] [-a <Identity limit>] [-w <Usage limi
 volatile sig_atomic_t terminate = false;
 
 void signalled( int signum ) {
-	fprintf( stderr,"Warning: Termination scheduled\n" );
 	terminate = true;
 }
 
@@ -38,13 +38,14 @@ int main( const int argc,char* const argv[ ] ) {
 	int num_processors = DEF_NUM_PROCESSORS;
 	unsigned usage_limit = DEF_USAGE_LIMIT;
 	unsigned prealloc = DEF_PREALLOC;
+	unsigned fercycle = 0;
 	bool help = false;
 	FILE* const infile = stdin;
 	FILE* const outfile = stdout;
 	bool quiet = false;
 
 	int opt;
-	while( ( opt = getopt( argc,argv,"p:a:w:hq" ) )!=-1 ) {
+	while( ( opt = getopt( argc,argv,"p:a:w:hqk:" ) )!=-1 ) {
 		char* endptr;
 		switch( opt ) {
 		case 'p':
@@ -57,6 +58,10 @@ int main( const int argc,char* const argv[ ] ) {
 			break;
 		case 'w':
 			if( ( usage_limit = strtol( optarg,&endptr,0 ) )<0 || *endptr!='\0' )
+				help = true;
+			break;
+		case 'k':
+			if( ( fercycle = strtol( optarg,&endptr,0 ) )<0 || *endptr!='\0' )
 				help = true;
 			break;
 		case 'h':
@@ -91,6 +96,7 @@ int main( const int argc,char* const argv[ ] ) {
 		qs_evaluator_options_add( fermat_options,symbol,value );
 	}
 
+	qs_evaluator_options_add( fermat_options,"#",fercycle );
 
 	QsAEF aef = qs_aef_new( );
 	QsPivotGraph p = qs_pivot_graph_new_with_size( aef,mgr,(QsLoadFunction)qs_integral_mgr_load_expression,mgr,(QsSaveFunction)qs_integral_mgr_save_expression,prealloc,usage_limit );
