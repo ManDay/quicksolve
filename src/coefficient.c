@@ -178,7 +178,7 @@ static void init_fermat( QsEvaluator e ) {
 
 		e->out_fd = out_pipe[ 1 ];
 		e->out = fdopen( out_pipe[ 1 ],"w" );
-		//setbuf( e->out,NULL );
+		setbuf( e->out,NULL );
 	} else {
 		// Remote
 		close( in_pipe[ 0 ] );

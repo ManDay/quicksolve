@@ -84,6 +84,9 @@ int main( const int argc,char* const argv[ ] ) {
 	// Handle request for termination
 	sigaction( SIGINT,&(struct sigaction){ .sa_handler = signalled },NULL );
 
+	// Disable buffering for accurate timing
+	setbuf( stdout,NULL );
+
 	QsEvaluatorOptions fermat_options = qs_evaluator_options_new( );
 
 	QsIntegralMgr mgr = qs_integral_mgr_new_with_size( "idPR",".dat#type=kch","PR",".dat#type=kch",prealloc );

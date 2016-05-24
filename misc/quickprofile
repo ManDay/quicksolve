@@ -1,0 +1,33 @@
+#!/bin/bash
+
+plist="$(mktemp)"
+solver_output="$(mktemp -u)"
+cat > "$plist"
+
+total="$(cat "$plist" | wc -l)"
+current_done=0
+start_time="$(date +%s)"
+
+echo "0"
+
+mkfifo "$solver_output"
+
+trap "" SIGINT
+
+quicksolve -q "$@" <"$plist" >"$solver_output" &
+solver_pid=$!
+
+while read line
+do
+	((current_done++))
+
+	current_time="$(date +%s)"
+
+	echo "$((current_time - start_time))"
+	echo "$current_done/$total $line" >&2
+done <"$solver_output"
+
+rm "$solver_output" "$plist"
+
+current_time="$(date +%s)"
+echo "# $((current_time - start_time))"
