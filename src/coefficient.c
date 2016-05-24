@@ -312,13 +312,15 @@ static void finish_fermat( QsEvaluator e ) {
 QsCoefficient qs_evaluator_evaluate( QsEvaluator e,QsCompound x,QsOperation op ) {
 	QsCoefficient result = malloc( sizeof (struct QsCoefficient) );
 
-	submit_compound( e,x,op );
-	fermat_sync( e,&result->text );
-
-	if( e->evaluations++>e->max_evaluations ) {
+	if( e->max_evaluations && e->evaluations>=e->max_evaluations ) {
 		finish_fermat( e );
 		init_fermat( e );
 	}
+
+	submit_compound( e,x,op );
+	fermat_sync( e,&result->text );
+
+	e->evaluations++;
 
 	return result;
 }
