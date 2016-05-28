@@ -198,7 +198,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 			}
 
 			DBG_PRINT( "Normalization of %i failed, forcing full solution {\n",rc,order );
-			fprintf( stderr,"Warning: Canonical elimination in %i not normalizable (Recursion depth %i)\n",order,rc );
+			fprintf( stderr,"Warning: Canonical elimination in %i not normalizable (Recursion depth %i with despair %i)\n",order,rc,despair );
 			if( despair==QS_MAX_DESPAIR ) {
 				fprintf( stderr,"Error: Recursion for desperate elimination reached limit\n" );
 				abort( );

@@ -12,7 +12,7 @@ echo "0"
 
 mkfifo "$solver_output"
 
-trap "" SIGINT
+trap 'kill -SIGINT $solver_pid' SIGINT
 
 quicksolve -q "$@" <"$plist" >"$solver_output" &
 solver_pid=$!
