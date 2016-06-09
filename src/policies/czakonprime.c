@@ -28,8 +28,6 @@
 #include <unistd.h>
 
 static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsigned rc,volatile sig_atomic_t* const terminate,QsTerminalGroup waiter ) {
-	/* Assumes pivot was within USAGE_MARGIN when czakon_prime was called
-	 */
 	Pivot* target = g->components[ i ];
 
 	const unsigned order = target->meta.order;
@@ -54,7 +52,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 			} else if( suitable_besides_not_self ) {
 				DBG_PRINT_2( " Candidate %i (%hi,%s)\n",rc,candidate->meta.order,candidate->meta.consideration,candidate->meta.solved?"true":"false" );
 				QsTerminal wait;
-				target->refs[ j ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef ) );
+				target->refs[ j ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef,g->terminal_mgr,&(struct CoefficientId){ i,target->refs[ j ].head } ) );
 
 				if( !waiter )
 					waiter = qs_terminal_group_new( target->n_refs );
@@ -79,16 +77,17 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 					return;
 				}
 
-				QsCoefficient val;
 				QsTerminal val_term;
 
-				if( ( val = qs_terminal_group_pop( waiter,&val_term ) ) ) {
+				if( ( val_term = qs_terminal_group_pop( waiter ) ) ) {
 					unsigned candidate_j;
 					for( candidate_j = 0; candidate_j<target->n_refs; candidate_j++ )
 						if( target->refs[ candidate_j ].coefficient==(QsOperand)val_term )
 							break;
 
 					DBG_PRINT_2( " Operand %i is ready (%i remaining)\n",rc,candidate_j,qs_terminal_group_count( waiter ) );
+
+					QsCoefficient val = qs_terminal_acquire( val_term );
 
 					if( qs_coefficient_is_zero( val ) ) {
 						DBG_PRINT_2( " Deleting operand %p\n",rc,target->refs[ candidate_j ].coefficient );
@@ -115,6 +114,8 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 						next_target = load_pivot( g,next_i );
 						assert( next_target );
 					}
+
+					qs_terminal_release( val_term );
 				}
 
 				if( !next_target && j_next==target->n_refs ) {
@@ -186,15 +187,18 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 			if( self_found ) {
 				DBG_PRINT( "Normalizing %i for substitution\n",rc,order );
 				QsTerminal wait;
-				target->refs[ j_self ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j_self ].coefficient,g->aef ) );
+				target->refs[ j_self ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j_self ].coefficient,g->aef,g->terminal_mgr,&(struct CoefficientId){ i,i } ) );
 
 				if( !qs_coefficient_is_zero( qs_terminal_wait( wait ) ) ) {
+					qs_terminal_release( wait );
+
 					qs_pivot_graph_normalize( g,i );
 
 					target->meta.solved = true;
 
 					return;
-				}
+				} else
+					qs_terminal_release( wait );
 			}
 
 			DBG_PRINT( "Normalization of %i failed, forcing full solution {\n",rc,order );

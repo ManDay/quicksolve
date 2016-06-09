@@ -9,39 +9,21 @@
 
 #define COLLECT_PREALLOC 4
 
-/** Margin of pivots in memory
- *
- * The given number of consecutively loaded pivots is guaranteed to be
- * still in memory after their loading while all pivots which were
- * loaded previously to that given number may already have been written
- * back to database. Typically, and if the policy is well-written, this
- * value is 2 because the policies work in terms of relays, normalize
- * and collects, which at most need 2 pivots to work with. */
-#define USAGE_MARGIN 2
+struct CoefficientId {
+	QsComponent tail;
+	QsComponent head;
+};
 
 struct Reference {
 	QsComponent head;
 	QsOperand coefficient;
 };
 
-struct PivotLink {
-	struct PivotLink* after;
-	struct PivotLink* before;
-	QsComponent component;
-};
-
 typedef struct {
-	/* The associated PivotLink
-	 * 
-	 * For quicker access from the PivotLink to the associated Pivot, the
-	 * PivotLink is made the first member. */
-	struct PivotLink usage;
-
 	unsigned n_refs;
 	struct Reference* refs;
 
 	struct QsMetadata meta;
-
 } Pivot;
 
 struct QsPivotGraph {
@@ -54,19 +36,15 @@ struct QsPivotGraph {
 	void* load_data;
 	void* save_data;
 
-	unsigned usage_limit;
-
-	struct {
-		unsigned count;
-		struct PivotLink* oldest;
-		struct PivotLink* newest;
-	} usage;
+	QsTerminalMgr terminal_mgr;
 
 	QsAEF aef;
 };
 
+static void terminal_loader( QsTerminalData d,struct CoefficientId* id,QsPivotGraph self ) {
+}
 
-QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunction loader,void* save_data,QsSaveFunction saver,unsigned prealloc,unsigned usage_limit ) {
+QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunction loader,void* save_data,QsSaveFunction saver,unsigned prealloc ) {
 	QsPivotGraph result = malloc( sizeof (struct QsPivotGraph) );
 	result->n_components = 0;
 	result->allocated = prealloc;
@@ -75,42 +53,12 @@ QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunct
 	result->load_data = load_data;
 	result->saver = saver;
 	result->save_data = save_data;
-	result->usage_limit = usage_limit;
 
-	result->usage.oldest = NULL;
-	result->usage.newest = NULL;
-	result->usage.count = 0;
+	result->terminal_mgr = qs_terminal_mgr_new( (QsTerminalLoader)terminal_loader,sizeof (struct CoefficientId),result );
+
 	result->aef = aef;
 
 	return result;
-}
-
-static void insert_usage( QsPivotGraph g,Pivot* target ) {
-	target->usage.after = NULL;
-
-	if( g->usage.oldest ) {
-		target->usage.before = g->usage.newest;
-		g->usage.newest->after = &target->usage;
-	} else {
-		target->usage.before = NULL;
-		g->usage.oldest = &target->usage;
-	}
-
-	g->usage.newest = &target->usage;
-}
-
-static void notify_usage( QsPivotGraph g,Pivot* target ) {
-	if( target->usage.after )
-		target->usage.after->before = target->usage.before;
-	else
-		return;
-	
-	if( target->usage.before )
-		target->usage.before->after = target->usage.after;
-	else
-		g->usage.oldest = target->usage.after;
-		
-	insert_usage( g,target );
 }
 
 static void assert_coverage( QsPivotGraph g,QsComponent i ) {
@@ -141,11 +89,8 @@ static void free_pivot( Pivot* p ) {
 Pivot* load_pivot( QsPivotGraph g,QsComponent i ) {
 	assert_coverage( g,i );
 
-	if( g->components[ i ] ) {
-		if( g->usage_limit )
-			notify_usage( g,g->components[ i ] );
+	if( g->components[ i ] )
 		return g->components[ i ];
-	}
 
 	struct QsMetadata meta;
 	struct QsReflist l = g->loader( g->load_data,i,&meta );
@@ -161,53 +106,15 @@ Pivot* load_pivot( QsPivotGraph g,QsComponent i ) {
 	int j;
 	for( j = 0; j<result->n_refs; j++ ) {
 		result->refs[ j ].head = l.references[ j ].head;
-		result->refs[ j ].coefficient = (QsOperand)qs_operand_new_from_coefficient( l.references[ j ].coefficient );
+
+		struct CoefficientId id = { i,l.references[ j ].head };
+		QsTerminal coeff = qs_operand_new( g->terminal_mgr,&id );
+		qs_terminal_data_load( qs_terminal_get_data( coeff ),l.references[ j ].coefficient );
+
+		result->refs[ j ].coefficient = (QsOperand)coeff;
 	}
 
 	free( l.references );
-
-	/* The following ad-hoc strategy of writing back identities based on
-	 * when they were last used comes with two problems and possibly
-	 * remains a TODO:
-	 *
-	 * 1) If this thread does not block on writing them back because
-	 * the actual write is performed asynchronously by IntegralMgr, the
-	 * actual removal of identities takes place here and they are removed
-	 * instantly. The the write-back, due to asynchronicity, may lagg
-	 * behind this thread and there may be a situation when the data that was
-	 * already removed is actually still in memory, but no longer
-	 * accessible from this point because they were removed from the pivot
-	 * graph. If we then try to load that data again
-	 * 
-	 * a) we must wait for the write-back and following read
-	 * b) the write-back is useless in the first place
-	 *
-	 * It might therefore be worth considering that also the removal from
-	 * the pivot graph is initiated from the asynchronous context which
-	 * would prevent "false" removals, i.e. removals which happen although
-	 * it is already determined that the entry would be needed.
-	 *
-	 * 2) The priority of removal does not account for the fact that
-	 * writing back an identity blocks reading all other identities from
-	 * the same database.
-	 */
-	if( g->usage_limit ) {
-		result->usage.component = i;
-		insert_usage( g,result );
-
-		if( g->usage.count++>=g->usage_limit + 2 ) {
-			struct PivotLink* target_link = g->usage.oldest;
-
-			qs_pivot_graph_save( g,target_link->component );
-			
-			g->usage.oldest = target_link->after;
-			target_link->after->before = NULL;
-
-			g->components[ target_link->component ]= NULL;
-			free_pivot( (Pivot*)target_link );
-			g->usage.count--;
-		}
-	}
 
 	return g->components[ i ];
 }
@@ -235,7 +142,7 @@ bool qs_pivot_graph_relay( QsPivotGraph g,QsComponent tail,QsComponent head ) {
 	int j;
 	for( j = 0; j<tail_pivot->n_refs; j++ )
 		if( tail_pivot->refs[ j ].head==head ) {
-			QsOperand base = (QsOperand)qs_operand_terminate( tail_pivot->refs[ j ].coefficient,g->aef );
+			QsOperand base = (QsOperand)qs_operand_terminate( tail_pivot->refs[ j ].coefficient,g->aef,g->terminal_mgr,&(struct CoefficientId){ tail,head } );
 
 			tail_pivot->refs[ j ]= tail_pivot->refs[ tail_pivot->n_refs - 1 ];
 			tail_pivot->refs = realloc( tail_pivot->refs,( tail_pivot->n_refs + head_pivot->n_refs - 2 )*sizeof (struct Reference) );
@@ -245,7 +152,7 @@ bool qs_pivot_graph_relay( QsPivotGraph g,QsComponent tail,QsComponent head ) {
 			for( k = 0; k<head_pivot->n_refs; k++ ) {
 				QsComponent limb_head = head_pivot->refs[ k ].head;
 				if( limb_head!=head ) {
-					QsOperand limb_coefficient = (QsOperand)qs_operand_terminate( head_pivot->refs[ k ].coefficient,g->aef );
+					QsOperand limb_coefficient = (QsOperand)qs_operand_terminate( head_pivot->refs[ k ].coefficient,g->aef,g->terminal_mgr,&(struct CoefficientId){ head,limb_head } );
 					head_pivot->refs[ k ].coefficient = limb_coefficient;
 					
 					tail_pivot->refs[ tail_pivot->n_refs - 1 + j_prime ].head = limb_head;
@@ -348,13 +255,14 @@ void qs_pivot_graph_normalize( QsPivotGraph g,QsComponent target ) {
 	int j;
 	for( j = 0; j<target_pivot->n_refs; j++ )
 		if( target_pivot->refs[ j ].head==target ) {
-			QsOperand self = (QsOperand)qs_operand_bake( 1,&target_pivot->refs[ j ].coefficient,g->aef,QS_OPERATION_SUB );
+			QsOperand self = (QsOperand)qs_operand_bake( 1,&target_pivot->refs[ j ].coefficient,QS_OPERATION_SUB,g->aef,g->terminal_mgr,&(struct CoefficientId){ target,target } );
 			qs_operand_unref( target_pivot->refs[ j ].coefficient );
 
 			int k;
 			for( k = 0; k<target_pivot->n_refs; k++ )
 				if( target_pivot->refs[ k ].head==target ) {
-					target_pivot->refs[ k ].coefficient = (QsOperand)qs_operand_new_from_coefficient( qs_coefficient_one( true ) );
+					QsTerminal one = qs_operand_new_constant( qs_coefficient_one( true ) );
+					target_pivot->refs[ k ].coefficient = (QsOperand)one;
 				} else {
 					QsOperand new = (QsOperand)qs_operand_link( 2,(QsOperand[ ]){ target_pivot->refs[ k ].coefficient,self },QS_OPERATION_DIV );
 					qs_operand_unref( target_pivot->refs[ k ].coefficient );
@@ -373,7 +281,7 @@ void qs_pivot_graph_terminate( QsPivotGraph g,QsComponent i ) {
 	int j;
 	if( target )
 		for( j = 0; j<target->n_refs; j++ )
-			target->refs[ j ].coefficient = (QsOperand)qs_operand_terminate( target->refs[ j ].coefficient,g->aef );
+			target->refs[ j ].coefficient = (QsOperand)qs_operand_terminate( target->refs[ j ].coefficient,g->aef,g->terminal_mgr,&(struct CoefficientId){ i,target->refs[ j ].head } );
 }
 
 struct QsReflist qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
