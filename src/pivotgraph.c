@@ -42,6 +42,7 @@ struct QsPivotGraph {
 };
 
 static void terminal_loader( QsTerminalData d,struct CoefficientId* id,QsPivotGraph self ) {
+	qs_terminal_data_load( d,NULL );
 }
 
 QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunction loader,void* save_data,QsSaveFunction saver,unsigned prealloc ) {
