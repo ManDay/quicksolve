@@ -301,7 +301,11 @@ struct QsReflist qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
 			result.references[ j ].head = target->refs[ j ].head;
 			result.references[ j ].coefficient = qs_terminal_wait( (QsTerminal)target->refs[ j ].coefficient );
 
-			if( qs_coefficient_is_zero( result.references[ j ].coefficient ) ) {
+			bool is_zero = qs_coefficient_is_zero( result.references[ j ].coefficient );
+
+			qs_terminal_release( (QsTerminal)( target->refs[ j ].coefficient ) );
+
+			if( is_zero ) {
 				qs_operand_unref( target->refs[ j ].coefficient );
 				target->refs[ j ]= target->refs[ target->n_refs - 1 ];
 				target->n_refs--;

@@ -87,9 +87,10 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 
 					DBG_PRINT_2( " Operand %i is ready (%i remaining)\n",rc,candidate_j,qs_terminal_group_count( waiter ) );
 
-					QsCoefficient val = qs_terminal_acquire( val_term );
+					bool is_zero = qs_coefficient_is_zero( qs_terminal_acquire( val_term ) );
+					qs_terminal_release( val_term );
 
-					if( qs_coefficient_is_zero( val ) ) {
+					if( is_zero ) {
 						DBG_PRINT_2( " Deleting operand %p\n",rc,target->refs[ candidate_j ].coefficient );
 						/* The coefficient was found to be zero, we seize the
 						 * opportunity and delete the associated Operand. For that we
@@ -98,6 +99,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 						 * operand into the current operand's place and do NOT advance
 						 * j so as to not to have to reset j to the deleted operands
 						 * place, which would induce redundant passes. */
+
 						qs_operand_unref( target->refs[ candidate_j ].coefficient );
 						target->refs[ candidate_j ] = target->refs[ j ];
 						target->refs[ j ]= target->refs[ target->n_refs - 1 ];
@@ -114,8 +116,6 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 						next_target = load_pivot( g,next_i );
 						assert( next_target );
 					}
-
-					qs_terminal_release( val_term );
 				}
 
 				if( !next_target && j_next==target->n_refs ) {
