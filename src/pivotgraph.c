@@ -337,6 +337,8 @@ void qs_pivot_graph_destroy( QsPivotGraph g ) {
 			free_pivot( g->components[ j ] );
 		}
 
+	qs_terminal_mgr_destroy( g->terminal_mgr );
+
 	free( g->components );
 	free( g );
 }

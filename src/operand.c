@@ -44,7 +44,7 @@ struct TDL {
 struct Expression {
 	QsOperation operation;
 
-	unsigned n_operands;
+	atomic_uint n_operands;
 	QsOperand* operands;
 };
 
@@ -90,7 +90,7 @@ struct QsTerminalData {
 struct QsTerminal {
 	struct QsOperand operand;
 
-	pthread_spinlock_t lock; ///< Locks is_result
+	pthread_rwlock_t lock; ///< Locks is_result
 	QsTerminalMgr manager;
 	QsTerminalIdentifier id;
 
@@ -98,7 +98,7 @@ struct QsTerminal {
 	 *
 	 * Adding new SLL elements with an atomic next pointer is save.
 	 * Registering BakedExpressions in orphaned elements is also save. */
-	_Atomic( struct Depender* )dependers;
+	struct Depender* _Atomic dependers;
 
 	/** Lock removal of dependers
 	 *
@@ -191,8 +191,24 @@ QsTerminalMgr qs_terminal_mgr_new( QsTerminalLoader loader,size_t id_size,void* 
 	return result;
 }
 
+static void print_terminal_mgr( QsTerminalMgr m ) {
+	printf( "TerminalMgr %p: (%p,",m,&m->data );
+
+	struct TDL* link = m->data.after;
+
+	while( link ) {
+		printf( "%p) -> (%p,",link->before,link );
+		link = link->after;
+	}
+
+	printf( "0x0)\n" );
+}
+
 static void qs_terminal_mgr_add( QsTerminalMgr m,QsTerminalData d ) {
 	pthread_spin_lock( &m->lock );
+
+	if( m->data.after )
+		m->data.after->before = (struct TDL*)d;
 
 	d->link.before = &m->data;
 	d->link.after = m->data.after;
@@ -205,9 +221,16 @@ static void qs_terminal_mgr_del( QsTerminalMgr m,QsTerminalData d ) {
 	pthread_spin_lock( &m->lock );
 
 	d->link.before->after = d->link.after;
-	d->link.after->before = d->link.before;
+
+	if( d->link.after )
+		d->link.after->before = d->link.before;
 
 	pthread_spin_unlock( &m->lock );
+}
+
+void qs_terminal_mgr_destroy( QsTerminalMgr m ) {
+	assert( m->data.after==NULL );
+	free( m );
 }
 
 bool qs_aef_spawn( QsAEF a,QsEvaluatorOptions opts ) {
@@ -263,7 +286,7 @@ void qs_aef_destroy( QsAEF a ) {
 }
 
 static QsCompound qs_operand_discoverer( Expression e,unsigned j,bool* is_expression,QsOperation* op ) {
-	if( !( j<e->n_operands ) )
+	if( !( j<atomic_load_explicit( &e->n_operands,memory_order_relaxed ) ) )
 		return NULL;
 
 	// Polymorphic behaviour
@@ -311,28 +334,26 @@ QsTerminal qs_operand_new( QsTerminalMgr m,QsTerminalIdentifier id ) {
 
 	atomic_thread_fence( memory_order_acq_rel );
 
-	pthread_spin_init( &result->lock,PTHREAD_PROCESS_PRIVATE );
+	pthread_rwlock_init( &result->lock,NULL );
 	pthread_spin_init( &result->dependers_lock,PTHREAD_PROCESS_PRIVATE );
 	pthread_spin_init( &result->removal_lock,PTHREAD_PROCESS_PRIVATE );
 
 	result->manager = m;
 
-	if( id ) {
+	if( m ) {
 		result->id = result + 1;
 		memcpy( result->id,id,m->identifier_size );
+		qs_terminal_mgr_add( m,result->value.result );
 	} else
 		result->id = NULL;
-	
-	if( m )
-		qs_terminal_mgr_add( m,result->value.result );
 
 	return result;
 }
 
 QsTerminalData qs_terminal_get_data( QsTerminal t ) {
-	pthread_spin_lock( &t->lock );
+	pthread_rwlock_rdlock( &t->lock );
 	assert( t->is_result );
-	pthread_spin_unlock( &t->lock );
+	pthread_rwlock_unlock( &t->lock );
 
 	return t->value.result;
 }
@@ -343,9 +364,9 @@ void qs_terminal_data_load( QsTerminalData d,QsCoefficient c ) {
 }
 
 QsCoefficient qs_terminal_acquire( QsTerminal t ) {
-	pthread_spin_lock( &t->lock );
+	pthread_rwlock_rdlock( &t->lock );
 	assert( t->is_result );
-	pthread_spin_unlock( &t->lock );
+	pthread_rwlock_unlock( &t->lock );
 
 	unsigned previous = atomic_fetch_add_explicit( &t->value.result->refcount,1,memory_order_acq_rel );
 
@@ -360,8 +381,8 @@ void qs_terminal_release( QsTerminal t ) {
 }
 
 static void manage_tails( struct Expression e,const bool require ) {
-	int j;
-	for( j = 0; j<e.n_operands; j++ ) {
+	int j,j_max = atomic_load_explicit( &e.n_operands,memory_order_relaxed );
+	for( j = 0; j<j_max; j++ ) {
 		QsOperand op = e.operands[ j ];
 		if( op->is_terminal ) {
 			QsTerminal t = (QsTerminal)op;
@@ -516,7 +537,7 @@ static void* worker( void* udata ) {
 			QsCoefficient result = qs_evaluator_evaluate( ev,src,src->expression.operation );
 			manage_tails( src->expression,false );
 
-			pthread_spin_lock( &target->lock );
+			pthread_rwlock_wrlock( &target->lock );
 
 			target->is_result = true;
 
@@ -524,15 +545,17 @@ static void* worker( void* udata ) {
 			atomic_init( &target->value.result->refcount,0 );
 			atomic_init( &target->value.result->coefficient,result );
 
-			QsTerminalGroup waiter = src->waiter;
+			pthread_rwlock_unlock( &target->lock );
 
-			pthread_spin_unlock( &target->lock );
+			if( target->manager )
+				qs_terminal_mgr_add( target->manager,target->value.result );
+
+			QsTerminalGroup waiter = src->waiter;
 
 			int j;
 			for( j = 0; j<src->n_baked_deps; j++ ) {
 				QsTerminal depender = src->baked_deps[ j ];
 
-				assert( !depender->is_result );
 				expression_independ( depender );
 			}
 
@@ -566,7 +589,9 @@ static void* worker( void* udata ) {
 			/* We are still holding a refcount qua the expression below to all
 			 * dependencies, which we can herein refer to and demand
 			 * recalculation of their D-values */
-			for( j = 0; j<src->expression.n_operands; j++ ) {
+			int j_max = atomic_load_explicit( &src->expression.n_operands,memory_order_relaxed );
+
+			for( j = 0; j<j_max; j++ ) {
 				QsOperand next_raw = src->expression.operands[ j ];
 				
 				if( next_raw->is_terminal )
@@ -616,7 +641,8 @@ static void terminal_list_destroy( struct TerminalList* target ) {
 }
 
 static void terminal_add_dependency( QsTerminal dependee,QsTerminal depender ) {
-	pthread_spin_lock( &dependee->lock );
+	pthread_rwlock_wrlock( &dependee->lock );
+
 	if( !dependee->is_result ) {
 		BakedExpression target = dependee->value.expression;
 		target->baked_deps = realloc( target->baked_deps,( target->n_baked_deps + 1 )*sizeof (QsTerminal) );
@@ -633,7 +659,8 @@ static void terminal_add_dependency( QsTerminal dependee,QsTerminal depender ) {
 		unsigned previous = atomic_fetch_add_explicit( &depender->value.expression->dependee_count,1 + dependee_adc,memory_order_release );
 		assert( previous>0 );
 	}
-	pthread_spin_unlock( &dependee->lock );
+
+	pthread_rwlock_unlock( &dependee->lock );
 
 	/* No need to lock for additions, since additions are always
 	 * dispatched from the front end. But we have to make sure that an
@@ -678,13 +705,13 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsOperation op,QsA
 	atomic_init( &result->removal,NULL );
 	atomic_init( &result->dependers,NULL );
 
-	pthread_spin_init( &result->lock,PTHREAD_PROCESS_PRIVATE );
+	pthread_rwlock_init( &result->lock,NULL );
 	pthread_spin_init( &result->dependers_lock,PTHREAD_PROCESS_PRIVATE );
 	pthread_spin_init( &result->removal_lock,PTHREAD_PROCESS_PRIVATE );
 
 	result->manager = m;
 
-	if( id ) {
+	if( m ) {
 		result->id = result + 1;
 		memcpy( result->id,id,m->identifier_size );
 	} else
@@ -697,10 +724,11 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsOperation op,QsA
 	 * it as a depender. These accesses concern the dependee_count,
 	 * decreasing it by one as soon as the respective dependee has been
 	 * calculated. Until we're done "preparing" the whole operand, we
-	 * increase the dependee_count by an additional 1 to prevent it from
-	 * being evaluated before everything was constructed.
+	 * increase the dependee_count by an additional "virtual" 1 to prevent
+	 * it from being evaluated before everything was constructed.
 	 */
 	atomic_init( &b->dependee_count,1 );
+	atomic_init( &e->n_operands,0 );
 
 	/* Protects both, the dependee count and the previously constructed
 	 * QsIntermediates which become operands of this QsTerminal, from
@@ -713,7 +741,6 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsOperation op,QsA
 	b->baked_deps = malloc( 0 );
 
 	e->operation = op;
-	e->n_operands = n_operands;
 	e->operands = malloc( n_operands*sizeof (QsOperand) );
 
 	DBG_PRINT_3( "Baking ",0 );
@@ -722,6 +749,13 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsOperation op,QsA
 	for( k = 0; k<n_operands; k++ ) {
 		QsOperand next_raw = os[ k ];
 
+		/* Finished calculations from further upstream in the dependency
+		 * chain will propagate downstream and should be applied on all
+		 * operands whose ADC included the respective calculation.
+		 * This means that during downstrean propagation, we need to see
+		 * exactly those baked_deps, which have consumed their ADC before
+		 * the propagation arrived at the respective operand.
+		 */
 		DBG_APPEND_3( "%p ",next_raw );
 		
 		if( next_raw->is_terminal ) {
@@ -743,7 +777,10 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsOperation op,QsA
 		}
 
 		e->operands[ k ]= qs_operand_ref( next_raw );
+
+		atomic_fetch_add_explicit( &e->n_operands,1,memory_order_release );
 	}
+
 
 	DBG_APPEND_3( "by %s into %p\n",OP2STR( op ),result );
 
@@ -764,7 +801,7 @@ QsIntermediate qs_operand_link( unsigned n_operands,QsOperand* os,QsOperation op
 	result->debug_used = false;
 
 	e->operation = op;
-	e->n_operands = n_operands;
+	atomic_init( &e->n_operands,n_operands );
 	e->operands = malloc( n_operands*sizeof (QsOperand) );
 
 	DBG_PRINT_3( "Linking ",0 );
@@ -815,8 +852,8 @@ QsOperand qs_operand_ref( QsOperand o ) {
 }
 
 static void expression_clean( Expression e ) {
-	int j;
-	for( j = 0; j<e->n_operands; j++ )
+	int j,j_max = atomic_load_explicit( &e->n_operands,memory_order_acquire );
+	for( j = 0; j<j_max; j++ )
 		qs_operand_unref( e->operands[ j ] );
 
 	free( e->operands );
@@ -844,6 +881,9 @@ void qs_operand_unref( QsOperand o ) {
 			assert( target->is_result );
 			assert( atomic_load_explicit( &target->value.result->refcount,memory_order_acquire )==0 );
 
+			if( target->manager )
+				qs_terminal_mgr_del( target->manager,target->value.result );
+
 			if( target->value.result->coefficient )
 				qs_coefficient_destroy( target->value.result->coefficient );
 
@@ -860,7 +900,7 @@ void qs_operand_unref( QsOperand o ) {
 			/* target->id is not being freed, as it has been allocated as part
 			 * of target */
 
-			pthread_spin_destroy( &target->lock );
+			pthread_rwlock_destroy( &target->lock );
 		} else {
 			QsIntermediate target = (QsIntermediate)o;
 
@@ -892,17 +932,20 @@ static void expression_independ( QsTerminal t ) {
 
 	/* If we want to dispatch the work to the queue before recursing to
 	 * decrease the accumulated dependency counts, we must assure that the
-	 * BakedExpression (and thus its member baked_deps) is not destroyed
-	 * while we do that. Therefore we lock. If we make sure we don't try
-	 * to acquire the same lock in the worker, the calculation can already
-	 * begin while we're still recursing to reduce dependee counts. */
-	pthread_spin_lock( &t->lock );
+	 * BakedExpression (and thus its member baked_deps) is not replaced by
+	 * the result (least of all destroyed) while we do that. Therefore we
+	 * lock here and block against the lock in the worker where we would
+	 * replace the BakedExpression by the result. If we make sure we don't
+	 * try to acquire the same lock in the worker, the calculation can
+	 * already begin while we're still recursing to reduce dependee
+	 * counts. */
+	pthread_rwlock_rdlock( &t->lock );
 
 	if( previous==1 )
 		aef_push_independent( e->queue,t );
 
-	int j;
-	for( j = 0; j<e->expression.n_operands; j++ ) {
+	int j,j_max = atomic_load_explicit( &e->expression.n_operands,memory_order_acquire );
+	for( j = 0; j<j_max; j++ ) {
 		QsOperand next_raw = e->expression.operands[ j ];
 		
 		if( next_raw->is_terminal )
@@ -919,7 +962,7 @@ static void expression_independ( QsTerminal t ) {
 	for( j = 0; j<t->value.expression->n_baked_deps; j++ )
 		expression_independ( t->value.expression->baked_deps[ j ] );
 
-	pthread_spin_unlock( &t->lock );
+	pthread_rwlock_unlock( &t->lock );
 }
 
 static void aef_push_independent( QsAEF a,QsTerminal o ) {
@@ -971,7 +1014,7 @@ unsigned qs_terminal_group_push( QsTerminalGroup g,QsTerminal t ) {
 	g->targets[ g->n_targets ]= t;
 	g->n_targets++;
 
-	pthread_spin_lock( &t->lock );
+	pthread_rwlock_rdlock( &t->lock );
 	if( !t->is_result ) {
 		BakedExpression e = t->value.expression;
 
@@ -980,7 +1023,7 @@ unsigned qs_terminal_group_push( QsTerminalGroup g,QsTerminal t ) {
 		assert( !e->waiter );
 		e->waiter = g;
 	}
-	pthread_spin_unlock( &t->lock );
+	pthread_rwlock_unlock( &t->lock );
 
 	return g->n_targets - 1;
 }
@@ -1002,16 +1045,16 @@ QsTerminal qs_terminal_group_pop( QsTerminalGroup g ) {
 		while( !result && j<g->n_targets ) {
 			QsTerminal target = g->targets[ j ];
 
-			pthread_spin_lock( &target->lock );
+			pthread_rwlock_rdlock( &target->lock );
 			if( target->is_result ) {
-				pthread_spin_unlock( &target->lock );
+				pthread_rwlock_unlock( &target->lock );
 
 				result = target;
 
 				g->targets[ j ]= g->targets[ g->n_targets - 1 ];
 				g->n_targets--;
 			} else
-				pthread_spin_unlock( &target->lock );
+				pthread_rwlock_unlock( &target->lock );
 
 			j++;
 		}
@@ -1046,7 +1089,7 @@ void qs_terminal_group_clear( QsTerminalGroup g ) {
 	for( j = 0; j<g->n_targets; j++ ) {
 		QsTerminal target = g->targets[ j ];
 		if( target ) {
-			pthread_spin_lock( &target->lock );
+			pthread_rwlock_rdlock( &target->lock );
 
 			if( !target->is_result ) {
 				assert( target->value.expression->waiter );
@@ -1054,7 +1097,7 @@ void qs_terminal_group_clear( QsTerminalGroup g ) {
 				target->value.expression->waiter = NULL;
 			}
 
-			pthread_spin_unlock( &target->lock );
+			pthread_rwlock_unlock( &target->lock );
 		}
 	}
 

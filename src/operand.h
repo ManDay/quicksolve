@@ -34,7 +34,10 @@ QsTerminal qs_terminal_group_pop( QsTerminalGroup );
 void qs_terminal_group_destroy( QsTerminalGroup );
 unsigned qs_terminal_group_count( QsTerminalGroup );
 void qs_terminal_group_clear( QsTerminalGroup );
+
 QsTerminalMgr qs_terminal_mgr_new( QsTerminalLoader,size_t,void* );
+void qs_terminal_mgr_destroy( QsTerminalMgr );
+
 void qs_terminal_data_load( QsTerminalData,QsCoefficient );
 QsTerminalData qs_terminal_get_data( QsTerminal );
 void qs_terminal_release( QsTerminal );
