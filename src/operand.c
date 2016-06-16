@@ -44,13 +44,14 @@ struct TDL {
 struct Expression {
 	QsOperation operation;
 
-	atomic_uint n_operands;
+	unsigned n_operands;
 	QsOperand* operands;
 };
 
 struct BakedExpression {
 	struct Expression expression;
-	atomic_uint dependee_count;
+	atomic_uint debug_dc;
+	atomic_uint adc;
 	QsAEF queue;
 	QsTerminalGroup waiter;
 
@@ -70,7 +71,13 @@ struct QsOperand {
 
 struct Depender {
 	_Atomic BakedExpression expression;
-	_Atomic( struct Depender* )next;
+
+	/** Next pointer
+	 *
+	 * Atomicity permits locklessly adding new depender while a removal
+	 * loop runs and only later signal D-Value adaption to repeat the
+	 * loop. */
+	struct Depender* _Atomic next;
 };
 
 struct QsTerminalData {
@@ -191,7 +198,7 @@ QsTerminalMgr qs_terminal_mgr_new( QsTerminalLoader loader,size_t id_size,void* 
 	return result;
 }
 
-static void print_terminal_mgr( QsTerminalMgr m ) {
+static void qs_terminal_mgr_print( QsTerminalMgr m ) {
 	printf( "TerminalMgr %p: (%p,",m,&m->data );
 
 	struct TDL* link = m->data.after;
@@ -213,6 +220,8 @@ static void qs_terminal_mgr_add( QsTerminalMgr m,QsTerminalData d ) {
 	d->link.before = &m->data;
 	d->link.after = m->data.after;
 	m->data.after = (struct TDL*)d;
+
+	assert( d->link.before );
 
 	pthread_spin_unlock( &m->lock );
 }
@@ -286,7 +295,7 @@ void qs_aef_destroy( QsAEF a ) {
 }
 
 static QsCompound qs_operand_discoverer( Expression e,unsigned j,bool* is_expression,QsOperation* op ) {
-	if( !( j<atomic_load_explicit( &e->n_operands,memory_order_relaxed ) ) )
+	if( !( j<e->n_operands ) )
 		return NULL;
 
 	// Polymorphic behaviour
@@ -381,8 +390,8 @@ void qs_terminal_release( QsTerminal t ) {
 }
 
 static void manage_tails( struct Expression e,const bool require ) {
-	int j,j_max = atomic_load_explicit( &e.n_operands,memory_order_relaxed );
-	for( j = 0; j<j_max; j++ ) {
+	int j;
+	for( j = 0; j<e.n_operands; j++ ) {
 		QsOperand op = e.operands[ j ];
 		if( op->is_terminal ) {
 			QsTerminal t = (QsTerminal)op;
@@ -471,7 +480,7 @@ static void remove_depender( QsTerminal dependee,BakedExpression depender ) {
 			BakedExpression item = atomic_load_explicit( &current->expression,memory_order_acquire );
 
 			if( item ) {
-				unsigned adc = atomic_load_explicit( &item->dependee_count,memory_order_acquire );
+				unsigned adc = atomic_load_explicit( &item->adc,memory_order_acquire );
 				pthread_spin_unlock( &dependee->dependers_lock );
 
 				if( adc<minimum || minimum==0 )
@@ -556,7 +565,16 @@ static void* worker( void* udata ) {
 			for( j = 0; j<src->n_baked_deps; j++ ) {
 				QsTerminal depender = src->baked_deps[ j ];
 
+				/* This locks prevents type-change of the depender (and thus any
+				 * subsequent dependers), which prevents destructions of the
+				 * BakedExpression structures through which we find the ADC
+				 * decrement propagation. */
+				pthread_rwlock_rdlock( &depender->lock );
+
+				atomic_fetch_sub_explicit( &depender->value.expression->debug_dc,1,memory_order_release );
 				expression_independ( depender );
+
+				pthread_rwlock_unlock( &depender->lock );
 			}
 
 			if( waiter ) {
@@ -589,9 +607,7 @@ static void* worker( void* udata ) {
 			/* We are still holding a refcount qua the expression below to all
 			 * dependencies, which we can herein refer to and demand
 			 * recalculation of their D-values */
-			int j_max = atomic_load_explicit( &src->expression.n_operands,memory_order_relaxed );
-
-			for( j = 0; j<j_max; j++ ) {
+			for( j = 0; j<src->expression.n_operands; j++ ) {
 				QsOperand next_raw = src->expression.operands[ j ];
 				
 				if( next_raw->is_terminal )
@@ -652,11 +668,13 @@ static void terminal_add_dependency( QsTerminal dependee,QsTerminal depender ) {
 		/* Though at first a simple refcount-like counter seems to suggest
 		 * relaxed ordering (which may actually work in this case due to the
 		 * implied memory barrier in the surrounding spinlock), we need to
-		 * make sure the decreases of the dependee_count by the worker
+		 * make sure the decreases of the adc by the worker
 		 * threads which may already be working on the dependee as of now,
 		 * are ordered after the associated increment. */
-		unsigned dependee_adc = atomic_load_explicit( &dependee->value.expression->dependee_count,memory_order_acquire );
-		unsigned previous = atomic_fetch_add_explicit( &depender->value.expression->dependee_count,1 + dependee_adc,memory_order_release );
+		unsigned dependee_adc = atomic_load_explicit( &dependee->value.expression->adc,memory_order_acquire );
+		unsigned previous = atomic_fetch_add_explicit( &depender->value.expression->adc,1 + dependee_adc,memory_order_release );
+
+		unsigned debug = atomic_fetch_add_explicit( &depender->value.expression->debug_dc,1,memory_order_release );
 		assert( previous>0 );
 	}
 
@@ -669,17 +687,19 @@ static void terminal_add_dependency( QsTerminal dependee,QsTerminal depender ) {
 	 * and start-over when notified of a change. */
 	struct Depender* new = malloc( sizeof (struct Depender) );
 	atomic_init( &new->expression,depender->value.expression );
-	new->next = NULL;
+	atomic_init( &new->next,NULL );
 
 	struct Depender* _Atomic* link= &dependee->dependers;
 	struct Depender* current;
 	bool inserted = false;
 
-	while( !inserted && !atomic_compare_exchange_strong_explicit( link,&(struct Depender*){ NULL },(new),memory_order_release,memory_order_relaxed ) ) {
+	atomic_thread_fence( memory_order_acq_rel );
+
+	while( !inserted && !atomic_compare_exchange_strong_explicit( link,&(struct Depender*){ NULL },new,memory_order_acq_rel,memory_order_acquire ) ) {
 		current = atomic_load_explicit( link,memory_order_acquire );
 		link = &current->next;
 
-		if( ( inserted = atomic_compare_exchange_strong_explicit( &current->expression,&(BakedExpression){ NULL },depender->value.expression,memory_order_release,memory_order_relaxed ) ) )
+		if( ( inserted = atomic_compare_exchange_strong_explicit( &current->expression,&(BakedExpression){ NULL },depender->value.expression,memory_order_acq_rel,memory_order_acquire ) ) )
 			free( new );
 	}
 }
@@ -721,14 +741,14 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsOperation op,QsA
 	Expression e = (Expression)b;
 
 	/* Other threads start accessing this operand as soon as we register
-	 * it as a depender. These accesses concern the dependee_count,
-	 * decreasing it by one as soon as the respective dependee has been
-	 * calculated. Until we're done "preparing" the whole operand, we
-	 * increase the dependee_count by an additional "virtual" 1 to prevent
-	 * it from being evaluated before everything was constructed.
+	 * it as a depender. These accesses concern the adc, decreasing it by
+	 * one as soon as the respective dependee has been calculated. Until
+	 * we're done "preparing" the whole operand, we increase the adc by an
+	 * additional "virtual" 1 to prevent it from being evaluated before
+	 * everything was constructed.
 	 */
-	atomic_init( &b->dependee_count,1 );
-	atomic_init( &e->n_operands,0 );
+	atomic_init( &b->adc,1 );
+	atomic_init( &b->debug_dc,1 );
 
 	/* Protects both, the dependee count and the previously constructed
 	 * QsIntermediates which become operands of this QsTerminal, from
@@ -741,6 +761,7 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsOperation op,QsA
 	b->baked_deps = malloc( 0 );
 
 	e->operation = op;
+	e->n_operands = 0;
 	e->operands = malloc( n_operands*sizeof (QsOperand) );
 
 	DBG_PRINT_3( "Baking ",0 );
@@ -776,15 +797,21 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsOperation op,QsA
 			}
 		}
 
+		pthread_rwlock_wrlock( &result->lock );
+		e->n_operands++;
 		e->operands[ k ]= qs_operand_ref( next_raw );
-
-		atomic_fetch_add_explicit( &e->n_operands,1,memory_order_release );
+		pthread_rwlock_unlock( &result->lock );
 	}
 
 
 	DBG_APPEND_3( "by %s into %p\n",OP2STR( op ),result );
 
+	pthread_rwlock_rdlock( &result->lock );
+
+	atomic_fetch_sub_explicit( &b->debug_dc,1,memory_order_release );
 	expression_independ( result );
+
+	pthread_rwlock_unlock( &result->lock );
 
 	return result;
 }
@@ -801,7 +828,7 @@ QsIntermediate qs_operand_link( unsigned n_operands,QsOperand* os,QsOperation op
 	result->debug_used = false;
 
 	e->operation = op;
-	atomic_init( &e->n_operands,n_operands );
+	e->n_operands = n_operands;
 	e->operands = malloc( n_operands*sizeof (QsOperand) );
 
 	DBG_PRINT_3( "Linking ",0 );
@@ -852,8 +879,8 @@ QsOperand qs_operand_ref( QsOperand o ) {
 }
 
 static void expression_clean( Expression e ) {
-	int j,j_max = atomic_load_explicit( &e->n_operands,memory_order_acquire );
-	for( j = 0; j<j_max; j++ )
+	int j;
+	for( j = 0; j<e->n_operands; j++ )
 		qs_operand_unref( e->operands[ j ] );
 
 	free( e->operands );
@@ -923,46 +950,78 @@ void qs_operand_unref( QsOperand o ) {
 }
 
 static void expression_independ( QsTerminal t ) {
-	assert( !t->is_result );
+	/* Three different locks have to occur during independing. For one, if
+	 * the operand which is being independed has been registered as a
+	 * depender but is still constructing, we must take according measures
+	 * to up-propagate the ADC to the respective D-Values on at most those
+	 * operands which have already been added in the construction.
+	 *
+	 * In principle, since the construction eventually independs from the
+	 * virtual dependency and thus updates D-values everywhere, we do not
+	 * have to iterate over any operands, if the construction is still to
+	 * reach that point. We detect this by write-locking the operand
+	 * during construction for the very purpose of try-readlocking it
+	 * there and, if the trial fails, not updating the D-Values from it.
+	 *
+	 * The second lock concerns the BakedExpressions through which the ADC
+	 * decrement will propagate. We want to delay evaluations as little as
+	 * possible, therefore we should propagate the decrement downstream by
+	 * first decreasing on the immediate dependers and recurse from there.
+	 *
+	 * Decreasing the ADC *before* recursing instead of *after* means,
+	 * however, that evaluation of the respective depender may already
+	 * begin and even finish, including the destruction of the associated
+	 * BakedExpression before we finished our recursion. We therefore
+	 * read-lock every depender into whom we recurse so as to not delay
+	 * evaluation, but conversion and consequently destruction of the
+	 * BakedExpression.
+	 *
+	 * The third lock concerns the registration of baked dependencies.
+	 * During propagation of the ADC decrement, we must propagate into
+	 * exactly those QsTerminals, which consumed the ADC before the
+	 * recursion. Therefore, the propagation and the ADC adjustment have
+	 * to be atomic.
+	 */
 	BakedExpression e = t->value.expression;
 
-	unsigned previous = atomic_fetch_sub_explicit( &e->dependee_count,1,memory_order_acq_rel );
+	/* This lock prevents the addition of baked_dependencies while we are
+	 * propagating down and prevents type-change. */
+	pthread_rwlock_rdlock( &t->lock );
+
+	unsigned previous = atomic_fetch_sub_explicit( &e->adc,1,memory_order_acq_rel );
+	unsigned current_dc = atomic_load_explicit( &e->debug_dc,memory_order_acq_rel );
+
+	if( previous==1 )
+		assert( current_dc==0 );
 
 	assert( previous>0 );
-
-	/* If we want to dispatch the work to the queue before recursing to
-	 * decrease the accumulated dependency counts, we must assure that the
-	 * BakedExpression (and thus its member baked_deps) is not replaced by
-	 * the result (least of all destroyed) while we do that. Therefore we
-	 * lock here and block against the lock in the worker where we would
-	 * replace the BakedExpression by the result. If we make sure we don't
-	 * try to acquire the same lock in the worker, the calculation can
-	 * already begin while we're still recursing to reduce dependee
-	 * counts. */
-	pthread_rwlock_rdlock( &t->lock );
 
 	if( previous==1 )
 		aef_push_independent( e->queue,t );
 
-	int j,j_max = atomic_load_explicit( &e->expression.n_operands,memory_order_acquire );
-	for( j = 0; j<j_max; j++ ) {
-		QsOperand next_raw = e->expression.operands[ j ];
-		
-		if( next_raw->is_terminal )
-			update_dvalue( (QsTerminal)next_raw,previous );
-		else {
-			QsIntermediate next = (QsIntermediate)next_raw;
-
-			int k;
-			for( k = 0; k<next->cache_tails->n_operands; k++ )
-				update_dvalue( next->cache_tails->operands[ k ],previous );
-		}
-	}
-
+	int j;
 	for( j = 0; j<t->value.expression->n_baked_deps; j++ )
 		expression_independ( t->value.expression->baked_deps[ j ] );
 
 	pthread_rwlock_unlock( &t->lock );
+
+	if( !pthread_rwlock_tryrdlock( &t->lock ) ) {
+		for( j = 0; j<e->expression.n_operands; j++ ) {
+			QsOperand next_raw = e->expression.operands[ j ];
+			
+			if( next_raw->is_terminal )
+				update_dvalue( (QsTerminal)next_raw,previous );
+			else {
+				QsIntermediate next = (QsIntermediate)next_raw;
+
+				int k;
+				for( k = 0; k<next->cache_tails->n_operands; k++ )
+					update_dvalue( next->cache_tails->operands[ k ],previous );
+			}
+		}
+
+		pthread_rwlock_unlock( &t->lock );
+	}
 }
 
 static void aef_push_independent( QsAEF a,QsTerminal o ) {
