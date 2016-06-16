@@ -156,7 +156,6 @@ struct QsTerminalMgr {
 	void* upointer;
 
 	pthread_spinlock_t lock;
-
 	struct TDL data;
 };
 
@@ -196,19 +195,6 @@ QsTerminalMgr qs_terminal_mgr_new( QsTerminalLoader loader,size_t id_size,void* 
 	result->data.after = NULL;
 
 	return result;
-}
-
-static void qs_terminal_mgr_print( QsTerminalMgr m ) {
-	printf( "TerminalMgr %p: (%p,",m,&m->data );
-
-	struct TDL* link = m->data.after;
-
-	while( link ) {
-		printf( "%p) -> (%p,",link->before,link );
-		link = link->after;
-	}
-
-	printf( "0x0)\n" );
 }
 
 static void qs_terminal_mgr_add( QsTerminalMgr m,QsTerminalData d ) {
@@ -554,10 +540,18 @@ static void* worker( void* udata ) {
 			atomic_init( &target->value.result->refcount,0 );
 			atomic_init( &target->value.result->coefficient,result );
 
-			pthread_rwlock_unlock( &target->lock );
-
 			if( target->manager )
 				qs_terminal_mgr_add( target->manager,target->value.result );
+
+			/* Unlock only after adding the target to the terminal manager,
+			 * because otherwise, another thread may slip in between them,
+			 * including an unref and destruction, which would attempt to
+			 * delete the target from the terminal manager. */
+
+			/* AFTER THIS POINT
+			 *
+			 * /!\ The target may no longer be assumed to exist /!\ */
+			pthread_rwlock_unlock( &target->lock );
 
 			QsTerminalGroup waiter = src->waiter;
 
