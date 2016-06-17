@@ -353,6 +353,18 @@ QsCoefficient qs_coefficient_new_from_binary( const char* data,size_t size ) {
 	return result;
 }
 
+QsCoefficient qs_coefficient_new_with_string( char* data ) {
+	QsCoefficient result = malloc( sizeof (QsCoefficient) );
+	result->text = data;
+	return result;
+}	
+
+char* qs_coefficient_disband( QsCoefficient c ) {
+	char* result = c->text;
+	free( c );
+	return result;
+}
+
 size_t qs_coefficient_to_binary( QsCoefficient c,char** out ) {
 	size_t len = strlen( c->text );
 	
@@ -377,6 +389,10 @@ bool qs_coefficient_is_zero( const QsCoefficient c ) {
 void qs_coefficient_destroy( QsCoefficient c ) {
 	free( c->text );
 	free( c );
+}
+
+size_t qs_coefficient_size( QsCoefficient c ) {
+	return strlen( c->text );
 }
 
 static char* replace_first( char* base,size_t offset,const char* pattern,const char *replacement,size_t base_len,size_t pattern_len,size_t replacement_len ) {

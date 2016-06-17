@@ -61,5 +61,24 @@ QsCoefficient qs_coefficient_one( bool );
 size_t qs_coefficient_to_binary( QsCoefficient,char** );
 void qs_coefficient_destroy( QsCoefficient );
 void qs_coefficient_substitute( QsCoefficient,const char*,const char* );
+size_t qs_coefficient_size( QsCoefficient );
+
+/** Transforms a coefficient into a string
+ *
+ * The inverse of qs_coefficient_new_with_string. The coefficient is
+ * destroyed.
+ */
+char* qs_coefficient_disband( QsCoefficient );
+
+/** New coeficient with given data
+ *
+ * Creates a coefficient from a given string in memory while consuming
+ * the string.
+ *
+ * @param[transfer=full] String from which the coefficient is created
+ *
+ * @return The coefficient
+ */
+QsCoefficient qs_coefficient_new_with_string( char* );
 
 #endif

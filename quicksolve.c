@@ -40,9 +40,10 @@ int main( const int argc,char* const argv[ ] ) {
 	FILE* const infile = stdin;
 	FILE* const outfile = stdout;
 	bool quiet = false;
+	char* storage = "storage.dat#type=kch";
 
 	int opt;
-	while( ( opt = getopt( argc,argv,"p:a:w:hqk:" ) )!=-1 ) {
+	while( ( opt = getopt( argc,argv,"p:a:w:hqk:s:" ) )!=-1 ) {
 		char* endptr;
 		switch( opt ) {
 		case 'p':
@@ -57,6 +58,9 @@ int main( const int argc,char* const argv[ ] ) {
 			if( ( fercycle = strtol( optarg,&endptr,0 ) )<0 || *endptr!='\0' )
 				help = true;
 			break;
+		case 's':
+			storage = optarg;
+			break;
 		case 'h':
 			help = true;
 			break;
@@ -66,7 +70,9 @@ int main( const int argc,char* const argv[ ] ) {
 		}
 	}
 
-	if( help ) {
+	QsDb storage_db = qs_db_new( storage,QS_DB_READ | QS_DB_WRITE | QS_DB_CREATE );
+
+	if( help || !storage_db ) {
 		printf( "%s %s\n",argv[ 0 ],usage );
 		exit( EXIT_FAILURE );
 	}
@@ -95,7 +101,7 @@ int main( const int argc,char* const argv[ ] ) {
 	qs_evaluator_options_add( fermat_options,"#",fercycle );
 
 	QsAEF aef = qs_aef_new( );
-	QsPivotGraph p = qs_pivot_graph_new_with_size( aef,mgr,(QsLoadFunction)qs_integral_mgr_load_expression,mgr,(QsSaveFunction)qs_integral_mgr_save_expression,prealloc );
+	QsPivotGraph p = qs_pivot_graph_new_with_size( aef,mgr,(QsLoadFunction)qs_integral_mgr_load_expression,mgr,(QsSaveFunction)qs_integral_mgr_save_expression,storage_db,prealloc );
 
 	for( j = 0; j<num_processors; j++ )
 		qs_aef_spawn( aef,fermat_options );

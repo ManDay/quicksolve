@@ -229,6 +229,12 @@ struct QsDbEntry* qs_db_get( QsDb db,const char* keyname,unsigned keylen ) {
 		return NULL;
 }
 
+void qs_db_del( QsDb db,const char* keyname,unsigned keylen ) {
+	assert_open( db );
+
+	kcdbremove( db->db,keyname,keylen );
+}
+
 void qs_db_set( QsDb db,struct QsDbEntry* e ) {
 	assert_open( db );
 

@@ -6,12 +6,14 @@
 #include <string.h>
 #include <stdio.h>
 #include <assert.h>
+#include <pthread.h>
 
 #define COLLECT_PREALLOC 4
 
 struct CoefficientId {
-	QsComponent tail;
-	QsComponent head;
+	unsigned uid; ///< Unique id across all coefficients
+	QsComponent tail; ///< Suuplementary information
+	QsComponent head; ///< Supplementary information
 };
 
 struct Reference {
@@ -37,15 +39,65 @@ struct QsPivotGraph {
 	void* save_data;
 
 	QsTerminalMgr terminal_mgr;
+	pthread_mutex_t cstorage_lock;
+	QsDb cstorage;
+	unsigned long memory;
+	unsigned long max_memory;
 
 	QsAEF aef;
 };
 
-static void terminal_loader( QsTerminalData d,struct CoefficientId* id,QsPivotGraph self ) {
-	qs_terminal_data_load( d,NULL );
+static void manage_memory( QsPivotGraph g ) {
+	QsCoefficient pop = NULL;
+	struct CoefficientId* return_id;
+	while( g->memory>g->max_memory &&( pop = qs_terminal_mgr_pop( g->terminal_mgr,(QsTerminalIdentifier*)&return_id ) ) ) {
+		char* binary = qs_coefficient_disband( pop );
+		size_t len = strlen( binary )+ 1;
+
+		struct QsDbEntry return_entry = {
+			(char*)&return_id->uid,
+			sizeof (unsigned),
+			binary,
+			len
+		};
+
+		qs_db_set( g->cstorage,&return_entry );
+
+		free( binary );
+		g->memory -= len;
+	}
 }
 
-QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunction loader,void* save_data,QsSaveFunction saver,unsigned prealloc ) {
+static void terminal_loader( QsTerminal t,struct CoefficientId* id,QsPivotGraph g ) {
+	unsigned uid = id->uid;
+
+	pthread_mutex_lock( &g->cstorage_lock );
+
+	struct QsDbEntry* result = qs_db_get( g->cstorage,(char*)&uid,sizeof (unsigned) );
+	QsCoefficient coefficient = qs_coefficient_new_with_string( result->val );
+	g->memory += result->vallen;
+
+	free( result->key );
+	free( result );
+
+	qs_terminal_load( t,coefficient );
+
+	pthread_mutex_unlock( &g->cstorage_lock );
+
+	manage_memory( g );
+}
+
+static void terminal_loaded( size_t bytes,QsPivotGraph g ) {
+	g->memory += bytes;
+
+	manage_memory( g );
+}
+
+static void terminal_discarded( struct CoefficientId* id,QsPivotGraph g ) {
+	qs_db_del( g->cstorage,(char*)&id->uid,sizeof (unsigned) );
+}
+
+QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunction loader,void* save_data,QsSaveFunction saver,QsDb cstorage,unsigned prealloc ) {
 	QsPivotGraph result = malloc( sizeof (struct QsPivotGraph) );
 	result->n_components = 0;
 	result->allocated = prealloc;
@@ -54,8 +106,11 @@ QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunct
 	result->load_data = load_data;
 	result->saver = saver;
 	result->save_data = save_data;
+	result->cstorage = cstorage;
 
-	result->terminal_mgr = qs_terminal_mgr_new( (QsTerminalLoader)terminal_loader,sizeof (struct CoefficientId),result );
+	pthread_mutex_init( &result->cstorage_lock,NULL );
+
+	result->terminal_mgr = qs_terminal_mgr_new( (QsTerminalLoader)terminal_loader,(QsTerminalLoadCallback)terminal_loaded,(QsTerminalDiscardCallback)terminal_discarded,sizeof (struct CoefficientId),result );
 
 	result->aef = aef;
 
@@ -110,7 +165,7 @@ Pivot* load_pivot( QsPivotGraph g,QsComponent i ) {
 
 		struct CoefficientId id = { i,l.references[ j ].head };
 		QsTerminal coeff = qs_operand_new( g->terminal_mgr,&id );
-		qs_terminal_data_load( qs_terminal_get_data( coeff ),l.references[ j ].coefficient );
+		qs_terminal_load( coeff,l.references[ j ].coefficient );
 
 		result->refs[ j ].coefficient = (QsOperand)coeff;
 	}
