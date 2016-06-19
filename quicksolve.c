@@ -101,7 +101,7 @@ int main( const int argc,char* const argv[ ] ) {
 	qs_evaluator_options_add( fermat_options,"#",fercycle );
 
 	QsAEF aef = qs_aef_new( );
-	QsPivotGraph p = qs_pivot_graph_new_with_size( aef,mgr,(QsLoadFunction)qs_integral_mgr_load_expression,mgr,(QsSaveFunction)qs_integral_mgr_save_expression,storage_db,prealloc );
+	QsPivotGraph p = qs_pivot_graph_new_with_size( aef,mgr,(QsLoadFunction)qs_integral_mgr_load_expression,mgr,(QsSaveFunction)qs_integral_mgr_save_expression,storage_db,1<<31,prealloc );
 
 	for( j = 0; j<num_processors; j++ )
 		qs_aef_spawn( aef,fermat_options );

@@ -52,7 +52,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 			} else if( suitable_besides_not_self ) {
 				DBG_PRINT_2( " Candidate %i (%hi,%s)\n",rc,candidate->meta.order,candidate->meta.consideration,candidate->meta.solved?"true":"false" );
 				QsTerminal wait;
-				target->refs[ j ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef,g->terminal_mgr,&(struct CoefficientId){ i,target->refs[ j ].head } ) );
+				target->refs[ j ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j ].coefficient,g->aef,g->memory.mgr,COEFFICIENT_META_NEW( g ) ) );
 
 				if( !waiter )
 					waiter = qs_terminal_group_new( target->n_refs );
@@ -187,7 +187,7 @@ static void czakon_prime( QsPivotGraph g,QsComponent i,QS_DESPAIR despair,unsign
 			if( self_found ) {
 				DBG_PRINT( "Normalizing %i for substitution\n",rc,order );
 				QsTerminal wait;
-				target->refs[ j_self ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j_self ].coefficient,g->aef,g->terminal_mgr,&(struct CoefficientId){ i,i } ) );
+				target->refs[ j_self ].coefficient = (QsOperand)( wait = qs_operand_terminate( target->refs[ j_self ].coefficient,g->aef,g->memory.mgr,COEFFICIENT_META_NEW( g ) ) );
 
 				if( !qs_coefficient_is_zero( qs_terminal_wait( wait ) ) ) {
 					qs_terminal_release( wait );

@@ -7,13 +7,23 @@
 #include <stdio.h>
 #include <assert.h>
 #include <pthread.h>
+#include <stdatomic.h>
 
 #define COLLECT_PREALLOC 4
+#define COEFFICIENT_UID_MAX_LOW ( ( (CoefficientUID)(-1) )>>1 )
+#define COEFFICIENT_UID_MAX_HIGH ( ( (CoefficientUID)(-1) ) )
+#define COEFFICIENT_META_NEW( g ) ( &(struct CoefficientMeta){ generate_id( g ),false } )
+
+typedef unsigned long CoefficientUID;
+
+struct CoefficientMeta {
+	CoefficientUID uid;
+	bool saved;
+};
 
 struct CoefficientId {
-	unsigned uid; ///< Unique id across all coefficients
-	QsComponent tail; ///< Suuplementary information
-	QsComponent head; ///< Supplementary information
+	QsComponent tail;
+	QsComponent head;
 };
 
 struct Reference {
@@ -38,66 +48,121 @@ struct QsPivotGraph {
 	void* load_data;
 	void* save_data;
 
-	QsTerminalMgr terminal_mgr;
-	pthread_mutex_t cstorage_lock;
-	QsDb cstorage;
-	unsigned long memory;
-	unsigned long max_memory;
+	struct {
+		CoefficientUID current_id;
+		_Atomic CoefficientUID n_low_ids;
+		_Atomic CoefficientUID n_high_ids;
+
+		_Atomic size_t usage;
+		size_t limit;
+
+		QsTerminalQueue queue;
+		QsTerminalMgr initial_mgr;
+		QsTerminalMgr mgr;
+
+		pthread_mutex_t lock;
+		QsDb storage;
+	} memory;
 
 	QsAEF aef;
 };
 
-static void manage_memory( QsPivotGraph g ) {
-	QsCoefficient pop = NULL;
-	struct CoefficientId* return_id;
-	while( g->memory>g->max_memory &&( pop = qs_terminal_mgr_pop( g->terminal_mgr,(QsTerminalIdentifier*)&return_id ) ) ) {
-		char* binary = qs_coefficient_disband( pop );
-		size_t len = strlen( binary )+ 1;
-
-		struct QsDbEntry return_entry = {
-			(char*)&return_id->uid,
-			sizeof (unsigned),
-			binary,
-			len
-		};
-
-		qs_db_set( g->cstorage,&return_entry );
-
-		free( binary );
-		g->memory -= len;
+static CoefficientUID generate_id( QsPivotGraph g ) {
+	if( g->memory.current_id==COEFFICIENT_UID_MAX_HIGH ) {
+		assert( atomic_load( &g->memory.n_low_ids )==0 );
+		g->memory.current_id = 0;
 	}
+
+	if( g->memory.current_id==COEFFICIENT_UID_MAX_LOW )
+		assert( atomic_load( &g->memory.n_high_ids )==0 );
+	
+	CoefficientUID result = g->memory.current_id;
+
+	if( g->memory.current_id<=COEFFICIENT_UID_MAX_LOW )
+		atomic_fetch_add_explicit( &g->memory.n_low_ids,1,memory_order_relaxed );
+	else
+		atomic_fetch_add_explicit( &g->memory.n_high_ids,1,memory_order_relaxed );
+
+	g->memory.current_id++;
+
+	return result;
 }
 
-static void terminal_loader( QsTerminal t,struct CoefficientId* id,QsPivotGraph g ) {
-	unsigned uid = id->uid;
+static void drop_id( QsPivotGraph g,CoefficientUID uid ) {
+	if( uid<=COEFFICIENT_UID_MAX_LOW )
+		atomic_fetch_sub_explicit( &g->memory.n_low_ids,1,memory_order_relaxed );
+	else
+		atomic_fetch_sub_explicit( &g->memory.n_high_ids,1,memory_order_relaxed );
+}
 
-	pthread_mutex_lock( &g->cstorage_lock );
+static void initial_terminal_loader( QsTerminal t,struct CoefficientId* id,QsPivotGraph g ) {
+	struct QsMetadata meta;
+	struct QsReflist l = g->loader( g->load_data,id->tail,&meta );
 
-	struct QsDbEntry* result = qs_db_get( g->cstorage,(char*)&uid,sizeof (unsigned) );
+	assert( l.n_references );
+
+	int j;
+	for( j = 0; j<l.n_references; j++ )
+		if( l.references[ j ].head==id->head )
+			qs_terminal_load( t,l.references[ j ].coefficient );
+		else
+			qs_coefficient_destroy( l.references[ j ].coefficient );
+
+	free( l.references );
+}
+
+static void terminal_loader( QsTerminal t,struct CoefficientMeta* id,QsPivotGraph g ) {
+	pthread_mutex_lock( &g->memory.lock );
+	struct QsDbEntry* result = qs_db_get( g->memory.storage,(char*)id,sizeof (unsigned) );
+	pthread_mutex_unlock( &g->memory.lock );
+
 	QsCoefficient coefficient = qs_coefficient_new_with_string( result->val );
-	g->memory += result->vallen;
 
 	free( result->key );
 	free( result );
 
 	qs_terminal_load( t,coefficient );
-
-	pthread_mutex_unlock( &g->cstorage_lock );
-
-	manage_memory( g );
 }
 
-static void terminal_loaded( size_t bytes,QsPivotGraph g ) {
-	g->memory += bytes;
+static void memory_change( size_t bytes,bool less,QsPivotGraph g ) {
+	if( less )
+		atomic_fetch_sub_explicit( &g->memory.usage,bytes,memory_order_relaxed );
+	else {
+		atomic_fetch_add_explicit( &g->memory.usage,bytes,memory_order_relaxed );;
 
-	manage_memory( g );
+		while( atomic_load_explicit( &g->memory.usage,memory_order_relaxed )>g->memory.limit )
+			if( !qs_terminal_mgr_pop( g->memory.mgr ) )
+				break;
+	}
 }
 
-static void terminal_discarded( struct CoefficientId* id,QsPivotGraph g ) {
-	qs_db_del( g->cstorage,(char*)&id->uid,sizeof (unsigned) );
+static void terminal_saver( QsCoefficient data,struct CoefficientMeta* id,QsPivotGraph g ) {
+	if( !id->saved ) {
+		char* binary = qs_coefficient_disband( data );
+		size_t len = strlen( binary )+ 1;
+
+		struct QsDbEntry return_entry = {	(char*)id,sizeof (CoefficientUID),binary,len };
+
+		pthread_mutex_lock( &g->memory.lock );
+		qs_db_set( g->memory.storage,&return_entry );
+		pthread_mutex_unlock( &g->memory.lock );
+
+		free( binary );
+	 } else
+	 	qs_coefficient_destroy( data );
 }
 
-QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunction loader,void* save_data,QsSaveFunction saver,QsDb cstorage,unsigned prealloc ) {
+static void terminal_discarder( struct CoefficientMeta* id,QsPivotGraph g ) {
+	if( id->saved ) {
+		pthread_mutex_lock( &g->memory.lock );
+		qs_db_del( g->memory.storage,(char*)id,sizeof (unsigned) );
+		pthread_mutex_unlock( &g->memory.lock );
+	}
+
+	drop_id( g,id->uid );
+}
+
+QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunction loader,void* save_data,QsSaveFunction saver,QsDb cstorage,size_t memory_max,unsigned prealloc ) {
 	QsPivotGraph result = malloc( sizeof (struct QsPivotGraph) );
 	result->n_components = 0;
 	result->allocated = prealloc;
@@ -106,11 +171,17 @@ QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunct
 	result->load_data = load_data;
 	result->saver = saver;
 	result->save_data = save_data;
-	result->cstorage = cstorage;
 
-	pthread_mutex_init( &result->cstorage_lock,NULL );
-
-	result->terminal_mgr = qs_terminal_mgr_new( (QsTerminalLoader)terminal_loader,(QsTerminalLoadCallback)terminal_loaded,(QsTerminalDiscardCallback)terminal_discarded,sizeof (struct CoefficientId),result );
+	result->memory.storage = cstorage;
+	result->memory.usage = 0;
+	result->memory.limit = memory_max;
+	result->memory.current_id = 0;
+	atomic_init( &result->memory.n_low_ids,0 );
+	atomic_init( &result->memory.n_high_ids,0 );
+	result->memory.queue = qs_terminal_queue_new( );
+	result->memory.initial_mgr = qs_terminal_mgr_new( (QsTerminalLoader)initial_terminal_loader,NULL,NULL,(QsTerminalMemoryCallback)memory_change,result->memory.queue,sizeof (struct CoefficientId),result );
+	result->memory.mgr = qs_terminal_mgr_new( (QsTerminalLoader)terminal_loader,(QsTerminalSaver)terminal_saver,(QsTerminalDiscarder)terminal_discarder,(QsTerminalMemoryCallback)memory_change,result->memory.queue,sizeof (struct CoefficientMeta),result );
+	pthread_mutex_init( &result->memory.lock,NULL );
 
 	result->aef = aef;
 
@@ -164,7 +235,7 @@ Pivot* load_pivot( QsPivotGraph g,QsComponent i ) {
 		result->refs[ j ].head = l.references[ j ].head;
 
 		struct CoefficientId id = { i,l.references[ j ].head };
-		QsTerminal coeff = qs_operand_new( g->terminal_mgr,&id );
+		QsTerminal coeff = qs_operand_new( g->memory.initial_mgr,&id );
 		qs_terminal_load( coeff,l.references[ j ].coefficient );
 
 		result->refs[ j ].coefficient = (QsOperand)coeff;
@@ -198,7 +269,7 @@ bool qs_pivot_graph_relay( QsPivotGraph g,QsComponent tail,QsComponent head ) {
 	int j;
 	for( j = 0; j<tail_pivot->n_refs; j++ )
 		if( tail_pivot->refs[ j ].head==head ) {
-			QsOperand base = (QsOperand)qs_operand_terminate( tail_pivot->refs[ j ].coefficient,g->aef,g->terminal_mgr,&(struct CoefficientId){ tail,head } );
+			QsOperand base = (QsOperand)qs_operand_terminate( tail_pivot->refs[ j ].coefficient,g->aef,g->memory.mgr,COEFFICIENT_META_NEW( g ) );
 
 			tail_pivot->refs[ j ]= tail_pivot->refs[ tail_pivot->n_refs - 1 ];
 			tail_pivot->refs = realloc( tail_pivot->refs,( tail_pivot->n_refs + head_pivot->n_refs - 2 )*sizeof (struct Reference) );
@@ -208,7 +279,7 @@ bool qs_pivot_graph_relay( QsPivotGraph g,QsComponent tail,QsComponent head ) {
 			for( k = 0; k<head_pivot->n_refs; k++ ) {
 				QsComponent limb_head = head_pivot->refs[ k ].head;
 				if( limb_head!=head ) {
-					QsOperand limb_coefficient = (QsOperand)qs_operand_terminate( head_pivot->refs[ k ].coefficient,g->aef,g->terminal_mgr,&(struct CoefficientId){ head,limb_head } );
+					QsOperand limb_coefficient = (QsOperand)qs_operand_terminate( head_pivot->refs[ k ].coefficient,g->aef,g->memory.mgr,COEFFICIENT_META_NEW( g ) );
 					head_pivot->refs[ k ].coefficient = limb_coefficient;
 					
 					tail_pivot->refs[ tail_pivot->n_refs - 1 + j_prime ].head = limb_head;
@@ -311,7 +382,7 @@ void qs_pivot_graph_normalize( QsPivotGraph g,QsComponent target ) {
 	int j;
 	for( j = 0; j<target_pivot->n_refs; j++ )
 		if( target_pivot->refs[ j ].head==target ) {
-			QsOperand self = (QsOperand)qs_operand_bake( 1,&target_pivot->refs[ j ].coefficient,QS_OPERATION_SUB,g->aef,g->terminal_mgr,&(struct CoefficientId){ target,target } );
+			QsOperand self = (QsOperand)qs_operand_bake( 1,&target_pivot->refs[ j ].coefficient,QS_OPERATION_SUB,g->aef,g->memory.mgr,COEFFICIENT_META_NEW( g ) );
 			qs_operand_unref( target_pivot->refs[ j ].coefficient );
 
 			int k;
@@ -337,7 +408,7 @@ void qs_pivot_graph_terminate( QsPivotGraph g,QsComponent i ) {
 	int j;
 	if( target )
 		for( j = 0; j<target->n_refs; j++ )
-			target->refs[ j ].coefficient = (QsOperand)qs_operand_terminate( target->refs[ j ].coefficient,g->aef,g->terminal_mgr,&(struct CoefficientId){ i,target->refs[ j ].head } );
+			target->refs[ j ].coefficient = (QsOperand)qs_operand_terminate( target->refs[ j ].coefficient,g->aef,g->memory.mgr,COEFFICIENT_META_NEW( g ) );
 }
 
 struct QsReflist qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
@@ -392,7 +463,9 @@ void qs_pivot_graph_destroy( QsPivotGraph g ) {
 			free_pivot( g->components[ j ] );
 		}
 
-	qs_terminal_mgr_destroy( g->terminal_mgr );
+	qs_terminal_mgr_destroy( g->memory.mgr );
+	qs_terminal_mgr_destroy( g->memory.initial_mgr );
+	qs_terminal_queue_destroy( g->memory.queue );
 
 	free( g->components );
 	free( g );
