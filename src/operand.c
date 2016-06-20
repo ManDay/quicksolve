@@ -240,56 +240,72 @@ void qs_terminal_mgr_destroy( QsTerminalMgr m ) {
 	free( m );
 }
 
-QsTerminal qs_terminal_queue_pop( QsTerminalQueue q,QsCoefficient* result_coeff ) {
+static void qs_terminal_queue_print( QsTerminalQueue q ) {
+	QsTerminal current = q->data;
+	while( current ) {
+		struct DValue dvalue = atomic_load_explicit( &current->dvalue,memory_order_relaxed );
+
+		printf( "(%p: %i) ",current,dvalue.value );
+
+		current = QS_TERMINAL_LINK( current ).after;
+	}
+
+	printf( "\n" );
+}
+
+bool qs_terminal_queue_pop( QsTerminalQueue q ) {
+	QsCoefficient popped = NULL;
+	QsTerminal target = NULL;
+
 	pthread_mutex_lock( &q->lock );
 
-	QsTerminal result = NULL;
 	do {
 		unsigned max_dvalue;
 
 		QsTerminal current = q->data;
-		while( current && result && max_dvalue!=0 ) {
+		while( current && !( target && max_dvalue==0 ) ) {
 			struct DValue dvalue = atomic_load_explicit( &current->dvalue,memory_order_relaxed );
 
-			if( !result || dvalue.value==0 || dvalue.value>max_dvalue ) {
-				result = current;
+			if( !target || dvalue.value==0 || dvalue.value>max_dvalue ) {
+				target = current;
 				max_dvalue = dvalue.value;
 			}
 
 			current = QS_TERMINAL_LINK( current ).after;
 		}
 
-	/* If the D-Value of the result that we picked was sufficiently high, it
+	/* If the D-Value of the target that we picked was sufficiently high, it
 	 * is unlikely that it will have been referenced at this point and is
 	 * indeed suitable for removal. If not, we loop. */
-		if( result ) {
-			pthread_spin_lock( &result->value.result->lock );
+		if( target ) {
+			pthread_spin_lock( &target->value.result->lock );
 
-			if( result->value.result->refcount==0 ) {
-				qs_terminal_queue_del( q,result );
-				*result_coeff = result->value.result->coefficient;
-				result->value.result->coefficient = NULL;
+			if( target->value.result->refcount==0 ) {
+				qs_terminal_queue_del( q,target );
+				popped = target->value.result->coefficient;
+				target->value.result->coefficient = NULL;
 			}
 
-			pthread_spin_unlock( &result->value.result->lock );
+			pthread_spin_unlock( &target->value.result->lock );
 		}
-	} while( !result && q->data );
+	} while( !popped && q->data );
+
+/* Expanding the lock around everything, including the actual saving and
+ * unloading prevents other threads from destroying it, if the refcount
+ * dropped to 0 in the mean-time (though this means the current save
+ * will immediately be followed by a discard). */
+	if( popped ) {
+		size_t change = qs_coefficient_size( popped );
+
+		if( target->manager->saver )
+			target->manager->saver( popped,target->id,target->manager->upointer );
+
+		target->manager->memory_callback( change,true,target->manager->upointer );
+	}
 
 	pthread_mutex_unlock( &q->lock );
 
-	return result;
-}
-
-bool qs_terminal_mgr_pop( QsTerminalMgr m ) {
-	QsCoefficient coeff;
-	QsTerminal t;
-	if( ( t = qs_terminal_queue_pop( m->queue,&coeff ) ) ) {
-		size_t change = qs_coefficient_size( coeff );
-		m->saver( coeff,t->id,m->upointer );
-		m->memory_callback( change,true,m->upointer );
-	}
-
-	return t;
+	return popped;
 }
 
 void qs_terminal_load( QsTerminal t,QsCoefficient c ) {
@@ -297,8 +313,11 @@ void qs_terminal_load( QsTerminal t,QsCoefficient c ) {
 	
 	t->value.result->coefficient = c;
 
-	if( t->id )
+	if( t->id ) {
+		pthread_mutex_lock( &t->manager->queue->lock );
 		qs_terminal_queue_add( t->manager->queue,t );
+		pthread_mutex_unlock( &t->manager->queue->lock );
+	}
 }
 
 QsCoefficient qs_terminal_acquire( QsTerminal t ) {
@@ -400,12 +419,6 @@ static QsCompound qs_operand_discoverer( Expression e,unsigned j,bool* is_expres
 		
 		return (QsCompound)( &operand->expression );
 	}
-}
-
-QsTerminal qs_operand_new_constant( QsCoefficient c ) {
-	QsTerminal result = qs_operand_new( NULL,NULL );
-	qs_terminal_load( result,c );
-	return result;
 }
 
 QsTerminal qs_operand_new( QsTerminalMgr m,QsTerminalMeta id ) {
@@ -537,8 +550,8 @@ static void remove_depender( QsTerminal dependee,BakedExpression depender ) {
 				unsigned adc = atomic_load_explicit( &item->adc,memory_order_acquire );
 				pthread_spin_unlock( &dependee->dependers_lock );
 
-				if( adc<minimum || minimum==0 )
-					minimum = adc;
+				if( ( adc + 1 )<minimum || minimum==0 )
+					minimum = adc + 1;
 			} else
 				pthread_spin_unlock( &dependee->dependers_lock );
 
@@ -609,20 +622,22 @@ static void* worker( void* udata ) {
 			pthread_spin_init( &target->value.result->lock,PTHREAD_PROCESS_PRIVATE );
 			target->value.result->link = (struct TDL){ NULL,NULL };
 			target->value.result->refcount = 0;
-			target->value.result->coefficient = NULL;
+			target->value.result->coefficient = result;
 
 /* Unlock only after adding the target to the terminal manager, because
  * otherwise, another thread may slip in between them, including an
  * unref and destruction, which would attempt to delete the target from
  * the terminal manager. */
 			if( target->manager ) {
+				size_t change = qs_coefficient_size( result );
+
 				if( target->id ) {
 					pthread_mutex_lock( &target->manager->queue->lock );
 					qs_terminal_queue_add( target->manager->queue,target );
 					pthread_mutex_unlock( &target->manager->queue->lock );
 				}
 
-				target->manager->memory_callback( qs_coefficient_size( result ),false,target->manager->upointer );
+				target->manager->memory_callback( change,false,target->manager->upointer );
 			}
 
 /* AFTER THIS POINT
@@ -928,7 +943,7 @@ QsIntermediate qs_operand_link( unsigned n_operands,QsOperand* os,QsOperation op
 
 QsTerminal qs_operand_terminate( QsOperand o,QsAEF a,QsTerminalMgr m,QsTerminalMeta id ) {
 	if( o->is_terminal ) {
-		if( m && id )
+		if( m && m->discarder && id )
 			m->discarder( id,m->upointer );
 
 		return (QsTerminal)o;
@@ -979,7 +994,7 @@ void qs_operand_unref( QsOperand o ) {
 				qs_terminal_queue_del( target->manager->queue,target );
 				pthread_mutex_unlock( &target->manager->queue->lock );
 
-				if( target->id )
+				if( target->manager->discarder && target->id )
 					target->manager->discarder( target->id,target->manager->upointer );
 			}
 

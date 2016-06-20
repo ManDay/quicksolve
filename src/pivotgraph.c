@@ -85,6 +85,7 @@ static CoefficientUID generate_id( QsPivotGraph g ) {
 
 	g->memory.current_id++;
 
+	//printf( "Generated Coefficient UID %lu\n",result );
 	return result;
 }
 
@@ -93,6 +94,8 @@ static void drop_id( QsPivotGraph g,CoefficientUID uid ) {
 		atomic_fetch_sub_explicit( &g->memory.n_low_ids,1,memory_order_relaxed );
 	else
 		atomic_fetch_sub_explicit( &g->memory.n_high_ids,1,memory_order_relaxed );
+
+	//printf( "Reaped Coefficient UID %lu due to discard\n",uid );
 }
 
 static void initial_terminal_loader( QsTerminal t,struct CoefficientId* id,QsPivotGraph g ) {
@@ -108,18 +111,22 @@ static void initial_terminal_loader( QsTerminal t,struct CoefficientId* id,QsPiv
 		else
 			qs_coefficient_destroy( l.references[ j ].coefficient );
 
+	//printf( "Selectively loaded initial Coefficient {%i,%i}\n",id->tail,id->head );
+
 	free( l.references );
 }
 
 static void terminal_loader( QsTerminal t,struct CoefficientMeta* id,QsPivotGraph g ) {
 	pthread_mutex_lock( &g->memory.lock );
-	struct QsDbEntry* result = qs_db_get( g->memory.storage,(char*)id,sizeof (unsigned) );
+	struct QsDbEntry* result = qs_db_get( g->memory.storage,(char*)&id->uid,sizeof (CoefficientUID) );
 	pthread_mutex_unlock( &g->memory.lock );
 
 	QsCoefficient coefficient = qs_coefficient_new_with_string( result->val );
 
 	free( result->key );
 	free( result );
+
+	//printf( "Re-loaded Coefficient with UID %lu\n",id->uid );
 
 	qs_terminal_load( t,coefficient );
 }
@@ -131,9 +138,11 @@ static void memory_change( size_t bytes,bool less,QsPivotGraph g ) {
 		atomic_fetch_add_explicit( &g->memory.usage,bytes,memory_order_relaxed );;
 
 		while( atomic_load_explicit( &g->memory.usage,memory_order_relaxed )>g->memory.limit )
-			if( !qs_terminal_mgr_pop( g->memory.mgr ) )
+			if( !qs_terminal_queue_pop( g->memory.queue ) )
 				break;
 	}
+
+	printf( "MEM: %zi\n",atomic_load( &g->memory.usage ) );
 }
 
 static void terminal_saver( QsCoefficient data,struct CoefficientMeta* id,QsPivotGraph g ) {
@@ -141,15 +150,18 @@ static void terminal_saver( QsCoefficient data,struct CoefficientMeta* id,QsPivo
 		char* binary = qs_coefficient_disband( data );
 		size_t len = strlen( binary )+ 1;
 
-		struct QsDbEntry return_entry = {	(char*)id,sizeof (CoefficientUID),binary,len };
+		struct QsDbEntry return_entry = {	(char*)&id->uid,sizeof (CoefficientUID),binary,len };
 
 		pthread_mutex_lock( &g->memory.lock );
 		qs_db_set( g->memory.storage,&return_entry );
 		pthread_mutex_unlock( &g->memory.lock );
 
 		free( binary );
-	 } else
+		//printf( "Saved Coefficient with UID %lu to disk\n",id->uid );
+	} else {
+		//printf( "Dropped Coefficient with UID %lu from memory (already saved)\n",id->uid );
 	 	qs_coefficient_destroy( data );
+	}
 }
 
 static void terminal_discarder( struct CoefficientMeta* id,QsPivotGraph g ) {
@@ -388,7 +400,8 @@ void qs_pivot_graph_normalize( QsPivotGraph g,QsComponent target ) {
 			int k;
 			for( k = 0; k<target_pivot->n_refs; k++ )
 				if( target_pivot->refs[ k ].head==target ) {
-					QsTerminal one = qs_operand_new_constant( qs_coefficient_one( true ) );
+					QsTerminal one = qs_operand_new( g->memory.mgr,NULL );
+					qs_terminal_load( one,qs_coefficient_one( true ) );
 					target_pivot->refs[ k ].coefficient = (QsOperand)one;
 				} else {
 					QsOperand new = (QsOperand)qs_operand_link( 2,(QsOperand[ ]){ target_pivot->refs[ k ].coefficient,self },QS_OPERATION_DIV );

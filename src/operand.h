@@ -82,7 +82,6 @@ QsOperand qs_operand_ref( QsOperand );
 void qs_operand_unref( QsOperand );
 
 QsTerminal qs_operand_new( QsTerminalMgr,QsTerminalMeta );
-QsTerminal qs_operand_new_constant( QsCoefficient );
 QsTerminal qs_operand_bake( unsigned,QsOperand*,QsOperation,QsAEF,QsTerminalMgr,QsTerminalMeta );
 QsTerminal qs_operand_terminate( QsOperand,QsAEF,QsTerminalMgr,QsTerminalMeta );
 QsIntermediate qs_operand_link( unsigned,QsOperand*,QsOperation );
@@ -97,10 +96,10 @@ void qs_terminal_group_clear( QsTerminalGroup );
 void qs_terminal_group_destroy( QsTerminalGroup );
 
 QsTerminalQueue qs_terminal_queue_new( );
+bool qs_terminal_queue_pop( QsTerminalQueue );
 void qs_terminal_queue_destroy( QsTerminalQueue );
 
 QsTerminalMgr qs_terminal_mgr_new( QsTerminalLoader,QsTerminalSaver,QsTerminalDiscarder,QsTerminalMemoryCallback,QsTerminalQueue,size_t,void* );
-bool qs_terminal_mgr_pop( QsTerminalMgr );
 void qs_terminal_mgr_destroy( QsTerminalMgr );
 
 void qs_terminal_load( QsTerminal,QsCoefficient );
