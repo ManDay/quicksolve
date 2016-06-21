@@ -104,6 +104,7 @@ void qs_terminal_mgr_destroy( QsTerminalMgr );
 
 void qs_terminal_load( QsTerminal,QsCoefficient );
 QsCoefficient qs_terminal_acquire( QsTerminal );
+bool qs_terminal_acquired( QsTerminal );
 void qs_terminal_release( QsTerminal );
 
 #endif

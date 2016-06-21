@@ -61,6 +61,9 @@ struct QsPivotGraph {
 		QsTerminalMgr mgr;
 
 		pthread_mutex_t lock;
+		pthread_mutex_t initial_lock;
+		pthread_mutex_t terminal_lock;
+		pthread_mutex_t initial_terminal_lock;
 		QsDb storage;
 	} memory;
 
@@ -94,41 +97,6 @@ static void drop_id( QsPivotGraph g,CoefficientUID uid ) {
 		atomic_fetch_sub_explicit( &g->memory.n_low_ids,1,memory_order_relaxed );
 	else
 		atomic_fetch_sub_explicit( &g->memory.n_high_ids,1,memory_order_relaxed );
-
-	//printf( "Reaped Coefficient UID %lu due to discard\n",uid );
-}
-
-static void initial_terminal_loader( QsTerminal t,struct CoefficientId* id,QsPivotGraph g ) {
-	struct QsMetadata meta;
-	struct QsReflist l = g->loader( g->load_data,id->tail,&meta );
-
-	assert( l.n_references );
-
-	int j;
-	for( j = 0; j<l.n_references; j++ )
-		if( l.references[ j ].head==id->head )
-			qs_terminal_load( t,l.references[ j ].coefficient );
-		else
-			qs_coefficient_destroy( l.references[ j ].coefficient );
-
-	//printf( "Selectively loaded initial Coefficient {%i,%i}\n",id->tail,id->head );
-
-	free( l.references );
-}
-
-static void terminal_loader( QsTerminal t,struct CoefficientMeta* id,QsPivotGraph g ) {
-	pthread_mutex_lock( &g->memory.lock );
-	struct QsDbEntry* result = qs_db_get( g->memory.storage,(char*)&id->uid,sizeof (CoefficientUID) );
-	pthread_mutex_unlock( &g->memory.lock );
-
-	QsCoefficient coefficient = qs_coefficient_new_with_string( result->val );
-
-	free( result->key );
-	free( result );
-
-	//printf( "Re-loaded Coefficient with UID %lu\n",id->uid );
-
-	qs_terminal_load( t,coefficient );
 }
 
 static void memory_change( size_t bytes,bool less,QsPivotGraph g ) {
@@ -137,12 +105,57 @@ static void memory_change( size_t bytes,bool less,QsPivotGraph g ) {
 	else {
 		atomic_fetch_add_explicit( &g->memory.usage,bytes,memory_order_relaxed );;
 
-		while( atomic_load_explicit( &g->memory.usage,memory_order_relaxed )>g->memory.limit )
-			if( !qs_terminal_queue_pop( g->memory.queue ) )
-				break;
+		if( g->memory.limit!=0 )
+			while( atomic_load_explicit( &g->memory.usage,memory_order_relaxed )>g->memory.limit )
+				if( !qs_terminal_queue_pop( g->memory.queue ) ) {
+					//fprintf( stderr,"Warning: Could not reduce memory usage\n" );
+					break;
+				}
+	}
+}
+
+static void initial_terminal_loader( QsTerminal t,struct CoefficientId* id,QsPivotGraph g ) {
+	pthread_mutex_lock( &g->memory.initial_terminal_lock );
+
+	if( !qs_terminal_acquired( t ) ) { 
+		struct QsMetadata meta;
+
+		pthread_mutex_lock( &g->memory.initial_lock );
+		struct QsReflist l = g->loader( g->load_data,id->tail,&meta );
+		pthread_mutex_unlock( &g->memory.initial_lock );
+
+		assert( l.n_references );
+
+		int j;
+		for( j = 0; j<l.n_references; j++ )
+			if( l.references[ j ].head==id->head )
+				qs_terminal_load( t,l.references[ j ].coefficient );
+			else
+				qs_coefficient_destroy( l.references[ j ].coefficient );
+
+		free( l.references );
 	}
 
-	printf( "MEM: %zi\n",atomic_load( &g->memory.usage ) );
+	pthread_mutex_unlock( &g->memory.initial_terminal_lock );
+}
+
+static void terminal_loader( QsTerminal t,struct CoefficientMeta* id,QsPivotGraph g ) {
+	pthread_mutex_lock( &g->memory.terminal_lock );
+
+	if( !qs_terminal_acquired( t ) ) {
+		pthread_mutex_lock( &g->memory.lock );
+		struct QsDbEntry* result = qs_db_get( g->memory.storage,(char*)&id->uid,sizeof (CoefficientUID) );
+		pthread_mutex_unlock( &g->memory.lock );
+
+		QsCoefficient coefficient = qs_coefficient_new_with_string( result->val );
+
+		free( result->key );
+		free( result );
+
+		qs_terminal_load( t,coefficient );
+	}
+
+	pthread_mutex_unlock( &g->memory.terminal_lock );
 }
 
 static void terminal_saver( QsCoefficient data,struct CoefficientMeta* id,QsPivotGraph g ) {
@@ -194,6 +207,9 @@ QsPivotGraph qs_pivot_graph_new_with_size( QsAEF aef,void* load_data,QsLoadFunct
 	result->memory.initial_mgr = qs_terminal_mgr_new( (QsTerminalLoader)initial_terminal_loader,NULL,NULL,(QsTerminalMemoryCallback)memory_change,result->memory.queue,sizeof (struct CoefficientId),result );
 	result->memory.mgr = qs_terminal_mgr_new( (QsTerminalLoader)terminal_loader,(QsTerminalSaver)terminal_saver,(QsTerminalDiscarder)terminal_discarder,(QsTerminalMemoryCallback)memory_change,result->memory.queue,sizeof (struct CoefficientMeta),result );
 	pthread_mutex_init( &result->memory.lock,NULL );
+	pthread_mutex_init( &result->memory.initial_lock,NULL );
+	pthread_mutex_init( &result->memory.terminal_lock,NULL );
+	pthread_mutex_init( &result->memory.initial_terminal_lock,NULL );
 
 	result->aef = aef;
 
@@ -232,7 +248,12 @@ Pivot* load_pivot( QsPivotGraph g,QsComponent i ) {
 		return g->components[ i ];
 
 	struct QsMetadata meta;
+
+	pthread_mutex_lock( &g->memory.initial_lock );
+
 	struct QsReflist l = g->loader( g->load_data,i,&meta );
+
+	pthread_mutex_unlock( &g->memory.initial_lock );
 
 	if( !l.n_references )
 		return NULL;
@@ -424,6 +445,14 @@ void qs_pivot_graph_terminate( QsPivotGraph g,QsComponent i ) {
 			target->refs[ j ].coefficient = (QsOperand)qs_operand_terminate( target->refs[ j ].coefficient,g->aef,g->memory.mgr,COEFFICIENT_META_NEW( g ) );
 }
 
+void qs_pivot_graph_release( QsPivotGraph g,QsComponent i ) {
+	Pivot* target = g->components[ i ];
+
+	int j;
+	for( j = 0; j<target->n_refs; j++ )
+		qs_terminal_release( (QsTerminal)( target->refs[ j ].coefficient ) );
+}
+
 struct QsReflist qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
 	Pivot* target = g->components[ i ];
 
@@ -442,9 +471,8 @@ struct QsReflist qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
 
 			bool is_zero = qs_coefficient_is_zero( result.references[ j ].coefficient );
 
-			qs_terminal_release( (QsTerminal)( target->refs[ j ].coefficient ) );
-
 			if( is_zero ) {
+				qs_terminal_release( (QsTerminal)( target->refs[ j ].coefficient ) );
 				qs_operand_unref( target->refs[ j ].coefficient );
 				target->refs[ j ]= target->refs[ target->n_refs - 1 ];
 				target->n_refs--;
@@ -462,6 +490,7 @@ void qs_pivot_graph_save( QsPivotGraph g,QsComponent i ) {
 	if( l.references ) {
 		g->saver( g->save_data,i,l,g->components[ i ]->meta );
 		free( l.references );
+		qs_pivot_graph_release( g,i );
 	}
 }
 
@@ -475,6 +504,8 @@ void qs_pivot_graph_destroy( QsPivotGraph g ) {
 			qs_pivot_graph_save( g,j );
 			free_pivot( g->components[ j ] );
 		}
+
+	assert( g->memory.usage==0 );
 
 	qs_terminal_mgr_destroy( g->memory.mgr );
 	qs_terminal_mgr_destroy( g->memory.initial_mgr );

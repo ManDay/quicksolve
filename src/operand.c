@@ -259,65 +259,72 @@ bool qs_terminal_queue_pop( QsTerminalQueue q ) {
 
 	pthread_mutex_lock( &q->lock );
 
-	do {
-		unsigned max_dvalue;
+	unsigned max_dvalue;
+	QsTerminal current = q->data;
 
-		QsTerminal current = q->data;
-		while( current && !( target && max_dvalue==0 ) ) {
-			struct DValue dvalue = atomic_load_explicit( &current->dvalue,memory_order_relaxed );
+	while( current && !( target && max_dvalue==0 ) ) {
+		struct DValue dvalue = atomic_load_explicit( &current->dvalue,memory_order_relaxed );
 
-			if( !target || dvalue.value==0 || dvalue.value>max_dvalue ) {
-				target = current;
-				max_dvalue = dvalue.value;
-			}
-
-			current = QS_TERMINAL_LINK( current ).after;
+		if( !target || dvalue.value==0 || dvalue.value>max_dvalue ) {
+			target = current;
+			max_dvalue = dvalue.value;
 		}
 
-	/* If the D-Value of the target that we picked was sufficiently high, it
-	 * is unlikely that it will have been referenced at this point and is
-	 * indeed suitable for removal. If not, we loop. */
-		if( target ) {
-			pthread_spin_lock( &target->value.result->lock );
+		current = QS_TERMINAL_LINK( current ).after;
+	}
 
-			if( target->value.result->refcount==0 ) {
-				qs_terminal_queue_del( q,target );
-				popped = target->value.result->coefficient;
-				target->value.result->coefficient = NULL;
-			}
+	if( target ) {
+		pthread_spin_lock( &target->value.result->lock );
 
-			pthread_spin_unlock( &target->value.result->lock );
-		}
-	} while( !popped && q->data );
+		assert( target->value.result->refcount==0 );
+		qs_terminal_queue_del( q,target );
+		popped = target->value.result->coefficient;
+		target->value.result->coefficient = NULL;
 
-/* Expanding the lock around everything, including the actual saving and
- * unloading prevents other threads from destroying it, if the refcount
- * dropped to 0 in the mean-time (though this means the current save
- * will immediately be followed by a discard). */
-	if( popped ) {
+		pthread_spin_unlock( &target->value.result->lock );
+
 		size_t change = qs_coefficient_size( popped );
 
 		if( target->manager->saver )
 			target->manager->saver( popped,target->id,target->manager->upointer );
+		else
+			qs_coefficient_destroy( popped );
 
 		target->manager->memory_callback( change,true,target->manager->upointer );
 	}
 
+/* Due to the possibility of final unref from outside, the target may
+ * not longer be assumed to exist after the queue was unlocked. TODO
+ * make cleaner. */
 	pthread_mutex_unlock( &q->lock );
 
 	return popped;
 }
 
 void qs_terminal_load( QsTerminal t,QsCoefficient c ) {
-	assert( t->value.result->coefficient==NULL );
+	TerminalData result = t->value.result;
+	assert( result->coefficient==NULL );
 	
-	t->value.result->coefficient = c;
+/* No need to protect writes or reads of result->coefficient because all
+ * access to the coefficient is governed through the externally locked
+ * loader. */
+	size_t change = qs_coefficient_size( c );
+	result->coefficient = c;
 
-	if( t->id ) {
-		pthread_mutex_lock( &t->manager->queue->lock );
+	pthread_mutex_lock( &t->manager->queue->lock );
+	pthread_spin_lock( &result->lock );
+
+	if( t->id && result->refcount==0 )
 		qs_terminal_queue_add( t->manager->queue,t );
-		pthread_mutex_unlock( &t->manager->queue->lock );
-	}
+
+	pthread_spin_unlock( &result->lock );
+	pthread_mutex_unlock( &t->manager->queue->lock );
+
+	t->manager->memory_callback( change,false,t->manager->upointer );
+}
+
+bool qs_terminal_acquired( QsTerminal t ) {
+	return t->value.result->coefficient;
 }
 
 QsCoefficient qs_terminal_acquire( QsTerminal t ) {
@@ -327,21 +334,41 @@ QsCoefficient qs_terminal_acquire( QsTerminal t ) {
 	assert( t->is_result );
 	pthread_rwlock_unlock( &t->lock );
 
+/* In order not to extend the spinlock around the loader so that
+ * parallel acquires of the coefficient will pointlessly spin during the
+ * load, we call the loader tentatively and rely on the load to
+ * implement an appropriate exclusion (preferably a mutex) so that only
+ * one invocation of the loader will eventually call qs_terminal_load.
+ */
+	pthread_mutex_lock( &t->manager->queue->lock );
 	pthread_spin_lock( &result->lock );
 
+	if( result->coefficient && result->refcount==0 ) {
+		qs_terminal_queue_del( t->manager->queue,t );
+	}
 	result->refcount++;
-	bool load = result->refcount==1 && result->coefficient==NULL;
 
 	pthread_spin_unlock( &result->lock );
+	pthread_mutex_unlock( &t->manager->queue->lock );
 
-	if( load )
-		t->manager->loader( t,t->id,t->manager->upointer );
+	t->manager->loader( t,t->id,t->manager->upointer );
 
 	return t->value.result->coefficient;
 }
 
 void qs_terminal_release( QsTerminal t ) {
-	atomic_fetch_sub_explicit( &t->value.result->refcount,1,memory_order_release );
+	TerminalData result = t->value.result;
+
+	pthread_mutex_lock( &t->manager->queue->lock );
+	pthread_spin_lock( &result->lock );
+
+	result->refcount--;
+	if( t->id && result->refcount==0 ) {
+		qs_terminal_queue_add( t->manager->queue,t );
+	}
+
+	pthread_spin_unlock( &result->lock );
+	pthread_mutex_unlock( &t->manager->queue->lock );
 }
 
 bool qs_aef_spawn( QsAEF a,QsEvaluatorOptions opts ) {
@@ -987,7 +1014,7 @@ void qs_operand_unref( QsOperand o ) {
 			 * be implemented. Currently not needed, because before a pivot is
 			 * relayed, it is always normalized and then waited upon. */
 			assert( target->is_result );
-			assert( atomic_load_explicit( &target->value.result->refcount,memory_order_acquire )==0 );
+			assert( target->value.result->refcount==0 );
 
 			if( target->manager ) {
 				pthread_mutex_lock( &target->manager->queue->lock );

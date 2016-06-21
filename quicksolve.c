@@ -163,6 +163,8 @@ int main( const int argc,char* const argv[ ] ) {
 					fflush( outfile );
 
 					free( result.references );
+
+					qs_pivot_graph_release( p,id );
 				}
 			}
 
@@ -178,6 +180,8 @@ int main( const int argc,char* const argv[ ] ) {
 	qs_pivot_graph_destroy( p );
 	qs_aef_destroy( aef );
 	qs_integral_mgr_destroy( mgr );
+
+	qs_db_destroy( storage_db );
 	
 	fclose( infile );
 	fclose( outfile );

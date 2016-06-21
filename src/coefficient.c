@@ -392,7 +392,7 @@ void qs_coefficient_destroy( QsCoefficient c ) {
 }
 
 size_t qs_coefficient_size( QsCoefficient c ) {
-	return strlen( c->text );
+	return strlen( c->text )+ 1;
 }
 
 static char* replace_first( char* base,size_t offset,const char* pattern,const char *replacement,size_t base_len,size_t pattern_len,size_t replacement_len ) {
