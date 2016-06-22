@@ -240,19 +240,6 @@ void qs_terminal_mgr_destroy( QsTerminalMgr m ) {
 	free( m );
 }
 
-static void qs_terminal_queue_print( QsTerminalQueue q ) {
-	QsTerminal current = q->data;
-	while( current ) {
-		struct DValue dvalue = atomic_load_explicit( &current->dvalue,memory_order_relaxed );
-
-		printf( "(%p: %i) ",current,dvalue.value );
-
-		current = QS_TERMINAL_LINK( current ).after;
-	}
-
-	printf( "\n" );
-}
-
 bool qs_terminal_queue_pop( QsTerminalQueue q ) {
 	QsCoefficient popped = NULL;
 	QsTerminal target = NULL;
@@ -330,10 +317,7 @@ bool qs_terminal_acquired( QsTerminal t ) {
 QsCoefficient qs_terminal_acquire( QsTerminal t ) {
 	TerminalData result = t->value.result;
 
-	pthread_rwlock_rdlock( &t->lock );
 	assert( t->is_result );
-	pthread_rwlock_unlock( &t->lock );
-
 /* In order not to extend the spinlock around the loader so that
  * parallel acquires of the coefficient will pointlessly spin during the
  * load, we call the loader tentatively and rely on the load to
@@ -591,11 +575,6 @@ static void remove_depender( QsTerminal dependee,BakedExpression depender ) {
 		if( latest ) {
 			dvalue = atomic_load_explicit( &dependee->dvalue,memory_order_acquire );
 			success = atomic_compare_exchange_strong_explicit( &dependee->dvalue,&dvalue,( (struct DValue){ false,minimum } ),memory_order_seq_cst,memory_order_relaxed );
-
-			if( !success ) {
-				dvalue = atomic_load_explicit( &dependee->dvalue,memory_order_acquire );
-				assert( dvalue.dirty );
-			}
 		}
 	} while( !success && latest );
 
@@ -1106,7 +1085,6 @@ static void expression_independ( QsTerminal t ) {
 	pthread_rwlock_rdlock( &t->lock );
 
 	unsigned previous = atomic_fetch_sub_explicit( &e->adc,1,memory_order_acq_rel );
-
 	assert( previous>0 );
 
 	if( previous==1 )

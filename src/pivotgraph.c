@@ -88,7 +88,6 @@ static CoefficientUID generate_id( QsPivotGraph g ) {
 
 	g->memory.current_id++;
 
-	//printf( "Generated Coefficient UID %lu\n",result );
 	return result;
 }
 
@@ -108,7 +107,7 @@ static void memory_change( size_t bytes,bool less,QsPivotGraph g ) {
 		if( g->memory.limit!=0 )
 			while( atomic_load_explicit( &g->memory.usage,memory_order_relaxed )>g->memory.limit )
 				if( !qs_terminal_queue_pop( g->memory.queue ) ) {
-					//fprintf( stderr,"Warning: Could not reduce memory usage\n" );
+					fprintf( stderr,"Warning: Could not reduce memory usage\n" );
 					break;
 				}
 	}
@@ -170,11 +169,8 @@ static void terminal_saver( QsCoefficient data,struct CoefficientMeta* id,QsPivo
 		pthread_mutex_unlock( &g->memory.lock );
 
 		free( binary );
-		//printf( "Saved Coefficient with UID %lu to disk\n",id->uid );
-	} else {
-		//printf( "Dropped Coefficient with UID %lu from memory (already saved)\n",id->uid );
+	} else
 	 	qs_coefficient_destroy( data );
-	}
 }
 
 static void terminal_discarder( struct CoefficientMeta* id,QsPivotGraph g ) {
