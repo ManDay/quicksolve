@@ -349,6 +349,8 @@ void qs_terminal_release( QsTerminal t ) {
 	pthread_mutex_lock( &t->manager->queue->lock );
 	pthread_spin_lock( &result->lock );
 
+	assert( result->refcount>0 );
+
 	result->refcount--;
 	if( t->id && result->refcount==0 ) {
 		qs_terminal_queue_add( t->manager->queue,t );

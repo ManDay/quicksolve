@@ -33,7 +33,7 @@ const char const usage[ ]= "[-p <Threads>] [-k <Fermat cycle>] [-a <Identity lim
 
 #include "src/policies/cks.c"
 
-struct CKSInfo info = { NULL,NULL,false,NULL };
+struct CKSInfo info = { NULL,NULL,false };
 
 void signalled( int signum ) {
 	info.terminate = true;
