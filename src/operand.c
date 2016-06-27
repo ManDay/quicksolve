@@ -224,6 +224,9 @@ static void qs_terminal_queue_add( QsTerminalQueue q,QsTerminal t ) {
 	q->data = t;
 }
 
+/* TODO: Removing an element of a DLL without locking the whole queue.
+ * This is not easily possible, because the lock-orders may cause
+ * deadlocks and the popping need to iterate over all anyway. */
 static void qs_terminal_queue_del( QsTerminalQueue q,QsTerminal t ) {
 	if( QS_TERMINAL_LINK( t ).before )
 		QS_TERMINAL_LINK( QS_TERMINAL_LINK( t ).before ).after = QS_TERMINAL_LINK( t ).after;
@@ -1254,13 +1257,13 @@ void qs_terminal_group_clear( QsTerminalGroup g ) {
 	g->n_targets = 0;
 }
 
-QsCoefficient qs_terminal_wait( QsTerminal t ) {
+QsTerminal qs_terminal_wait( QsTerminal t ) {
 	QsTerminalGroup g = qs_terminal_group_new( 1 );
 	qs_terminal_group_push( g,t );
 	qs_terminal_group_wait( g );
 	qs_terminal_group_destroy( g );
 
-	return qs_terminal_acquire( t );
+	return t;
 }
 
 unsigned qs_terminal_group_count( QsTerminalGroup g ) {

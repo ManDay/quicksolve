@@ -31,10 +31,12 @@ const char const usage[ ]= "[-p <Threads>] [-k <Fermat cycle>] [-a <Identity lim
 	"If -q is given, Quicksolve will not wait for finalization of each solution to print them but will only report that a solution has been formally obtained and may possibly still be evaluating.\n\n"
 	"For further documentation see the manual that came with Quicksolve";
 
-volatile sig_atomic_t terminate = false;
+#include "src/policies/cks.c"
+
+struct CKSInfo info = { NULL,NULL,false,NULL };
 
 void signalled( int signum ) {
-	terminate = true;
+	info.terminate = true;
 }
 
 int main( const int argc,char* const argv[ ] ) {
@@ -113,7 +115,8 @@ int main( const int argc,char* const argv[ ] ) {
 	qs_evaluator_options_add( fermat_options,"#",fercycle );
 
 	QsAEF aef = qs_aef_new( );
-	QsPivotGraph p = qs_pivot_graph_new_with_size( aef,mgr,(QsLoadFunction)qs_integral_mgr_load_expression,mgr,(QsSaveFunction)qs_integral_mgr_save_expression,storage_db,memlimit,prealloc );
+	info.symbolic_graph =
+	info.numeric_graph = qs_pivot_graph_new_with_size( aef,mgr,(QsLoadFunction)qs_integral_mgr_load_expression,mgr,(QsSaveFunction)qs_integral_mgr_save_expression,storage_db,memlimit,prealloc );
 
 	for( j = 0; j<num_processors; j++ )
 		qs_aef_spawn( aef,fermat_options );
@@ -128,9 +131,9 @@ int main( const int argc,char* const argv[ ] ) {
 		if( i ) {
 			QsComponent id = qs_integral_mgr_manage( mgr,i );
 
-			qs_pivot_graph_solve( p,id,&terminate );
+			cks_solve( &info,id );
 
-			if( terminate )
+			if( info.terminate )
 				break;
 			
 			char* target;
@@ -139,7 +142,7 @@ int main( const int argc,char* const argv[ ] ) {
 			if( quiet )
 				fprintf( outfile,"%s\n",target );
 			else {
-				struct QsReflist result = qs_pivot_graph_wait( p,id );
+				struct QsReflist result = qs_pivot_graph_acquire( info.symbolic_graph,id );
 
 				if( result.references ) {
 					fprintf( outfile,"fill %s =",target );
@@ -164,7 +167,7 @@ int main( const int argc,char* const argv[ ] ) {
 
 					free( result.references );
 
-					qs_pivot_graph_release( p,id );
+					qs_pivot_graph_release( info.symbolic_graph,id );
 				}
 			}
 
@@ -177,7 +180,7 @@ int main( const int argc,char* const argv[ ] ) {
 	
 	DBG_PRINT( "Solution done. Finalizing\n",0 );
 
-	qs_pivot_graph_destroy( p );
+	qs_pivot_graph_destroy( info.symbolic_graph );
 	qs_aef_destroy( aef );
 	qs_integral_mgr_destroy( mgr );
 

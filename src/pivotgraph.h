@@ -29,11 +29,19 @@ typedef void(* QsSaveFunction)( void*,QsComponent,struct QsReflist,struct QsMeta
 typedef struct QsPivotGraph* QsPivotGraph;
 
 QsPivotGraph qs_pivot_graph_new_with_size( QsAEF,void*,QsLoadFunction,void*,QsSaveFunction,QsDb,size_t,unsigned );
-void qs_pivot_graph_solve( QsPivotGraph,QsComponent,volatile sig_atomic_t* );
-struct QsReflist qs_pivot_graph_wait( QsPivotGraph,QsComponent );
+struct QsReflist qs_pivot_graph_acquire( QsPivotGraph,QsComponent );
 void qs_pivot_graph_release( QsPivotGraph,QsComponent );
 void qs_pivot_graph_destroy( QsPivotGraph );
 void qs_pivot_graph_save( QsPivotGraph,QsComponent );
-void qs_pivot_graph_terminate( QsPivotGraph,QsComponent );
+QsTerminal qs_pivot_graph_terminate( QsPivotGraph,QsComponent,QsComponent );
+void qs_pivot_graph_terminate_all( QsPivotGraph,QsComponent );
+struct QsMetadata* qs_pivot_graph_meta( QsPivotGraph,QsComponent );
+unsigned qs_pivot_graph_n_heads( QsPivotGraph,QsComponent );
+QsComponent qs_pivot_graph_head_by_index( QsPivotGraph,QsComponent,unsigned );
+QsComponent qs_pivot_graph_head_by_operand( QsPivotGraph,QsComponent,QsOperand );
+bool qs_pivot_graph_relay( QsPivotGraph,QsComponent,QsComponent );
+QsOperand qs_pivot_graph_collect( QsPivotGraph,QsComponent,QsComponent );
+void qs_pivot_graph_collect_all( QsPivotGraph,QsComponent );
+void qs_pivot_graph_normalize( QsPivotGraph,QsComponent );
 
 #endif

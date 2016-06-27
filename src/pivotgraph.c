@@ -237,11 +237,11 @@ static void free_pivot( Pivot* p ) {
 	free( p );
 }
 
-Pivot* load_pivot( QsPivotGraph g,QsComponent i ) {
+struct QsMetadata* qs_pivot_graph_meta( QsPivotGraph g,QsComponent i ) {
 	assert_coverage( g,i );
 
 	if( g->components[ i ] )
-		return g->components[ i ];
+		return &g->components[ i ]->meta;
 
 	struct QsMetadata meta;
 
@@ -272,7 +272,7 @@ Pivot* load_pivot( QsPivotGraph g,QsComponent i ) {
 
 	free( l.references );
 
-	return g->components[ i ];
+	return &g->components[ i ]->meta;
 }
 
 /** Relay an edge
@@ -384,6 +384,29 @@ QsOperand qs_pivot_graph_collect( QsPivotGraph g,QsComponent tail,QsComponent he
 	return result;
 }
 
+void qs_pivot_graph_collect_all( QsPivotGraph g,QsComponent i ) {
+	int j;
+	for( j = 0; j<g->components[ i ]->n_refs; j++ )
+		qs_pivot_graph_collect( g,i,g->components[ i ]->refs[ j ].head );
+}
+
+QsComponent qs_pivot_graph_head_by_operand( QsPivotGraph g,QsComponent tail,QsOperand head ) {
+	int j = 0;
+	while( g->components[ tail ]->refs[ j ].coefficient!=head )
+		j++;
+
+	return g->components[ tail ]->refs[ j ].head;
+}
+
+QsComponent qs_pivot_graph_head_by_index( QsPivotGraph g,QsComponent tail,unsigned head ) {
+	assert( g->components[ tail ]->n_refs>head );
+	return g->components[ tail ]->refs[ head ].head;
+}
+
+unsigned qs_pivot_graph_n_heads( QsPivotGraph g,QsComponent tail ) {
+	return g->components[ tail ]->n_refs;
+}
+
 /** Normalizes pivotal coefficient
  *
  * Assuming that all self-edges have already been collected into a
@@ -432,7 +455,21 @@ void qs_pivot_graph_normalize( QsPivotGraph g,QsComponent target ) {
 		}
 }
 
-void qs_pivot_graph_terminate( QsPivotGraph g,QsComponent i ) {
+QsTerminal qs_pivot_graph_terminate( QsPivotGraph g,QsComponent tail,QsComponent head ) {
+	Pivot* target = g->components[ tail ];
+
+	int j;
+	for( j = 0; j<target->n_refs; j++ )
+		if( target->refs[ j ].head==head ) {
+			QsTerminal result = qs_operand_terminate( target->refs[ j ].coefficient,g->aef,g->memory.mgr,COEFFICIENT_META_NEW( g ) );
+			target->refs[ j ].coefficient = (QsOperand)result;
+			return result;
+		}
+
+	return NULL;
+}
+
+void qs_pivot_graph_terminate_all( QsPivotGraph g,QsComponent i ) {
 	Pivot* target = g->components[ i ];
 
 	int j;
@@ -449,13 +486,13 @@ void qs_pivot_graph_release( QsPivotGraph g,QsComponent i ) {
 		qs_terminal_release( (QsTerminal)( target->refs[ j ].coefficient ) );
 }
 
-struct QsReflist qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
+struct QsReflist qs_pivot_graph_acquire( QsPivotGraph g,QsComponent i ) {
 	Pivot* target = g->components[ i ];
 
 	struct QsReflist result = { 0,NULL };
 
 	if( target ) {
-		qs_pivot_graph_terminate( g,i );
+		qs_pivot_graph_terminate_all( g,i );
 
 		result.n_references = target->n_refs;
 		result.references = malloc( result.n_references*sizeof (struct QsReference) );
@@ -463,12 +500,12 @@ struct QsReflist qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
 		int j = 0;
 		while( j<target->n_refs ) {
 			result.references[ j ].head = target->refs[ j ].head;
-			result.references[ j ].coefficient = qs_terminal_wait( (QsTerminal)target->refs[ j ].coefficient );
+			result.references[ j ].coefficient = qs_terminal_acquire( qs_terminal_wait( (QsTerminal)target->refs[ j ].coefficient ) );
 
 			bool is_zero = qs_coefficient_is_zero( result.references[ j ].coefficient );
+			qs_terminal_release( (QsTerminal)( target->refs[ j ].coefficient ) );
 
 			if( is_zero ) {
-				qs_terminal_release( (QsTerminal)( target->refs[ j ].coefficient ) );
 				qs_operand_unref( target->refs[ j ].coefficient );
 				target->refs[ j ]= target->refs[ target->n_refs - 1 ];
 				target->n_refs--;
@@ -482,7 +519,7 @@ struct QsReflist qs_pivot_graph_wait( QsPivotGraph g,QsComponent i ) {
 }	
 
 void qs_pivot_graph_save( QsPivotGraph g,QsComponent i ) {
-	struct QsReflist l = qs_pivot_graph_wait( g,i );
+	struct QsReflist l = qs_pivot_graph_acquire( g,i );
 	if( l.references ) {
 		g->saver( g->save_data,i,l,g->components[ i ]->meta );
 		free( l.references );
@@ -493,7 +530,7 @@ void qs_pivot_graph_save( QsPivotGraph g,QsComponent i ) {
 void qs_pivot_graph_destroy( QsPivotGraph g ) {
 	int j;
 	for( j = 0; j<g->n_components; j++ )
-		qs_pivot_graph_terminate( g,j );
+		qs_pivot_graph_terminate_all( g,j );
 
 	for( j = 0; j<g->n_components; j++ )
 		if( g->components[ j ] ) {
@@ -510,5 +547,3 @@ void qs_pivot_graph_destroy( QsPivotGraph g ) {
 	free( g->components );
 	free( g );
 }
-
-#include "policies/czakonprime.c"
