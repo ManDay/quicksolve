@@ -21,11 +21,14 @@
 #define STR( X ) #X
 #define XSTR( X ) STR( X )
 
-const char const usage[ ]= "[-p <Threads>] [-k <Fermat cycle>] [-a <Identity limit>] [-m <Memory limit>] [-b <Backing DB>] [-q] [<Symbol>[=<Subsitution>] ...]\n\n"
+const char const usage[ ]= "[-p <Threads>] [-k <Fermat cycle>] [-a <Identity limit>] [-m <Memory limit>] [-b <Backing DB>] [-q] [<Symbol><Assignment><Substitution>] ...]\n\n"
 	"<Threads>: Number of evaluators in parallel calculation [Default " XSTR( DEF_NUM_PROCESSORS ) "]\n"
 	"<Identity limit>: Upper bound on the number of identities in the system [Default " XSTR( DEF_PREALLOC ) "]\n"
 	"<Memory limit>: Memory limit in bytes above which coefficients are written to disk backing space or 0 for no limit [Default " XSTR( DEF_MEMLIMIT )"]\n"
 	"<Backing DB>: Kyotocabinet formatted string indicating the disk backing space database [Default '" DEF_BACKING "']\n"
+	"<Symbol>: One of the symbols occurring in the databases. All symbols must be registered\n"
+	"<Assignment>: Either '=' for numeric assignment only or ':' to substitute the given value even in the symbolic result\n"
+	"<Substitution>: The value to be substituted for the associated symbol\n"
 	"<Fermat cycle>: If greater than 0, reinitializes the FERMAT backend every that many evaluations [Default " XSTR( DEF_FERCYCLE ) "]\n\n"
 	"Reads list of integrals from stdin and produces FORM fill statements for those integrals in terms of master integrals to stdout. All occurring symbols from the identity databases must be registered as positional arguments and can optionally be chosen to be replaced.\n"
 	"If -q is given, Quicksolve will not wait for finalization of each solution to print them but will only report that a solution has been formally obtained and may possibly still be evaluating.\n\n"
@@ -33,7 +36,7 @@ const char const usage[ ]= "[-p <Threads>] [-k <Fermat cycle>] [-a <Identity lim
 
 #include "src/policies/cks.c"
 
-struct CKSInfo info = { NULL,NULL,false };
+struct CKSInfo info = { NULL,false };
 
 void signalled( int signum ) {
 	info.terminate = true;
@@ -101,27 +104,51 @@ int main( const int argc,char* const argv[ ] ) {
 	setbuf( stdout,NULL );
 
 	QsEvaluatorOptions fermat_options = qs_evaluator_options_new( );
+	QsEvaluatorOptions fermat_options_numeric = qs_evaluator_options_new( );
 
 	QsIntegralMgr mgr = qs_integral_mgr_new_with_size( "idPR",".dat#type=kch","PR",".dat#type=kch",prealloc );
 
 	int j;
 	for( j = optind; j<argc; j++ ) {
-		char* symbol = strtok( argv[ j ],"=" );
-		char* value = strtok( NULL,"" );
+		char* separator_equ = strchr( argv[ j ],'=' );
+		char* separator_col = strchr( argv[ j ],':' );
+
+		assert( separator_equ || separator_col );
+
+		char* symbol = argv[ j ];
+		char* value;
+		char* value_numeric;
+
+		if( !separator_equ ||( separator_col && separator_col<separator_equ ) ) {
+/* Full replacement */
+			*separator_col = '\0';
+			value_numeric = separator_col + 1;
+			value = value;
+		} else {
+/* Only numeric replacement */
+			*separator_equ = '\0';
+			value_numeric = separator_equ + 1;
+			value = NULL;
+		}
 
 		qs_evaluator_options_add( fermat_options,symbol,value );
+		qs_evaluator_options_add( fermat_options_numeric,symbol,value_numeric );
 	}
 
 	qs_evaluator_options_add( fermat_options,"#",fercycle );
 
 	QsAEF aef = qs_aef_new( );
-	info.symbolic_graph =
-	info.numeric_graph = qs_pivot_graph_new_with_size( aef,mgr,(QsLoadFunction)qs_integral_mgr_load_expression,mgr,(QsSaveFunction)qs_integral_mgr_save_expression,storage_db,memlimit,prealloc );
+	QsAEF aef_numeric = qs_aef_new( );
 
-	for( j = 0; j<num_processors; j++ )
+	info.graph = qs_pivot_graph_new_with_size( aef,aef_numeric,mgr,(QsLoadFunction)qs_integral_mgr_load_expression,mgr,(QsSaveFunction)qs_integral_mgr_save_expression,storage_db,memlimit,prealloc );
+
+	for( j = 0; j<num_processors; j++ ) {
 		qs_aef_spawn( aef,fermat_options );
+		qs_aef_spawn( aef_numeric,fermat_options_numeric );
+	}
 
 	qs_evaluator_options_destroy( fermat_options );
+	qs_evaluator_options_destroy( fermat_options_numeric );
 
 	ssize_t chars;
 	size_t N = 0;
@@ -142,7 +169,7 @@ int main( const int argc,char* const argv[ ] ) {
 			if( quiet )
 				fprintf( outfile,"%s\n",target );
 			else {
-				struct QsReflist result = qs_pivot_graph_acquire( info.symbolic_graph,id );
+				struct QsReflist result = qs_pivot_graph_acquire( info.graph,id );
 
 				if( result.references ) {
 					fprintf( outfile,"fill %s =",target );
@@ -167,7 +194,7 @@ int main( const int argc,char* const argv[ ] ) {
 
 					free( result.references );
 
-					qs_pivot_graph_release( info.symbolic_graph,id );
+					qs_pivot_graph_release( info.graph,id );
 				}
 			}
 
@@ -180,8 +207,9 @@ int main( const int argc,char* const argv[ ] ) {
 	
 	DBG_PRINT( "Solution done. Finalizing\n",0 );
 
-	qs_pivot_graph_destroy( info.symbolic_graph );
+	qs_pivot_graph_destroy( info.graph );
 	qs_aef_destroy( aef );
+	qs_aef_destroy( aef_numeric );
 	qs_integral_mgr_destroy( mgr );
 
 	qs_db_destroy( storage_db );

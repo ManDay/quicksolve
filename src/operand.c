@@ -301,16 +301,20 @@ void qs_terminal_load( QsTerminal t,QsCoefficient c ) {
 	size_t change = qs_coefficient_size( c );
 	result->coefficient = c;
 
-	pthread_mutex_lock( &t->manager->queue->lock );
-	pthread_spin_lock( &result->lock );
+	if( t->manager ) {
+		if( t->id ) {
+			pthread_mutex_lock( &t->manager->queue->lock );
+			pthread_spin_lock( &result->lock );
 
-	if( t->id && result->refcount==0 )
-		qs_terminal_queue_add( t->manager->queue,t );
+			if( result->refcount==0 )
+				qs_terminal_queue_add( t->manager->queue,t );
 
-	pthread_spin_unlock( &result->lock );
-	pthread_mutex_unlock( &t->manager->queue->lock );
+			pthread_spin_unlock( &result->lock );
+			pthread_mutex_unlock( &t->manager->queue->lock );
+		}
 
-	t->manager->memory_callback( change,false,t->manager->upointer );
+		t->manager->memory_callback( change,false,t->manager->upointer );
+	}
 }
 
 bool qs_terminal_acquired( QsTerminal t ) {
@@ -321,43 +325,48 @@ QsCoefficient qs_terminal_acquire( QsTerminal t ) {
 	TerminalData result = t->value.result;
 
 	assert( t->is_result );
-/* In order not to extend the spinlock around the loader so that
- * parallel acquires of the coefficient will pointlessly spin during the
- * load, we call the loader tentatively and rely on the load to
- * implement an appropriate exclusion (preferably a mutex) so that only
- * one invocation of the loader will eventually call qs_terminal_load.
- */
-	pthread_mutex_lock( &t->manager->queue->lock );
-	pthread_spin_lock( &result->lock );
 
-	if( result->coefficient && result->refcount==0 ) {
-		qs_terminal_queue_del( t->manager->queue,t );
+	if( t->manager && t->id ) {
+	/* In order not to extend the spinlock around the loader so that
+	 * parallel acquires of the coefficient will pointlessly spin during the
+	 * load, we call the loader tentatively and rely on the load to
+	 * implement an appropriate exclusion (preferably a mutex) so that only
+	 * one invocation of the loader will eventually call qs_terminal_load.
+	 */
+		pthread_mutex_lock( &t->manager->queue->lock );
+		pthread_spin_lock( &result->lock );
+
+		if( result->coefficient && result->refcount==0 )
+			qs_terminal_queue_del( t->manager->queue,t );
+
+		result->refcount++;
+
+		pthread_spin_unlock( &result->lock );
+		pthread_mutex_unlock( &t->manager->queue->lock );
+
+		t->manager->loader( t,t->id,t->manager->upointer );
 	}
-	result->refcount++;
-
-	pthread_spin_unlock( &result->lock );
-	pthread_mutex_unlock( &t->manager->queue->lock );
-
-	t->manager->loader( t,t->id,t->manager->upointer );
 
 	return t->value.result->coefficient;
 }
 
 void qs_terminal_release( QsTerminal t ) {
-	TerminalData result = t->value.result;
+	if( t->manager && t->id ) {
+		TerminalData result = t->value.result;
 
-	pthread_mutex_lock( &t->manager->queue->lock );
-	pthread_spin_lock( &result->lock );
+		pthread_mutex_lock( &t->manager->queue->lock );
+		pthread_spin_lock( &result->lock );
 
-	assert( result->refcount>0 );
+		assert( result->refcount>0 );
 
-	result->refcount--;
-	if( t->id && result->refcount==0 ) {
-		qs_terminal_queue_add( t->manager->queue,t );
+		result->refcount--;
+		if( t->id && result->refcount==0 ) {
+			qs_terminal_queue_add( t->manager->queue,t );
+		}
+
+		pthread_spin_unlock( &result->lock );
+		pthread_mutex_unlock( &t->manager->queue->lock );
 	}
-
-	pthread_spin_unlock( &result->lock );
-	pthread_mutex_unlock( &t->manager->queue->lock );
 }
 
 bool qs_aef_spawn( QsAEF a,QsEvaluatorOptions opts ) {
@@ -1012,7 +1021,8 @@ void qs_operand_unref( QsOperand o ) {
 			if( target->value.result->coefficient ) {
 				size_t change = qs_coefficient_size( target->value.result->coefficient );
 				qs_coefficient_destroy( target->value.result->coefficient );
-				target->manager->memory_callback( change,true,target->manager->upointer );
+				if( target->manager )
+					target->manager->memory_callback( change,true,target->manager->upointer );
 			}
 
 			free( target->value.result );

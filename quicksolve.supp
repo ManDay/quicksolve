@@ -6,7 +6,7 @@
    fun:qs_operand_bake
    fun:qs_pivot_graph_normalize
 	 ...
-   fun:czakon_prime
+   fun:cks
 }
 {
    atomic_compare_exchange_strong_false_positive
@@ -17,7 +17,7 @@
    fun:qs_operand_terminate
    fun:qs_pivot_graph_relay
    ...
-   fun:czakon_prime
+   fun:cks
 }
 {
    atomic_compare_exchange_strong_false_positive

@@ -1,14 +1,13 @@
 #include <unistd.h>
 
 struct CKSInfo {
-	QsPivotGraph symbolic_graph;
-	QsPivotGraph numeric_graph;
+	QsPivotGraph graph;
 	volatile sig_atomic_t terminate;
 	unsigned rd;
 };
 
 static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair,QsTerminalGroup waiter ) {
-	struct QsMetadata* meta = qs_pivot_graph_meta( info->numeric_graph,i );
+	struct QsMetadata* meta = qs_pivot_graph_meta( info->graph,i );
 
 	bool self_found = false;
 	unsigned j_self = 0;
@@ -17,12 +16,12 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair,QsTermina
 	unsigned next_i;
 
 	int j = 0;
-	DBG_PRINT_2( "Determining next target in %i\n",info->rd,order );
-	while( !info->terminate && !next_meta && j<qs_pivot_graph_n_refs( info->numeric_graph,i ) ) {
+	DBG_PRINT_2( "Determining next target in %i\n",info->rd,meta->order );
+	while( !info->terminate && !next_meta && j<qs_pivot_graph_n_refs( info->graph,i ) ) {
 		int j_next = j + 1;
 
-		QsComponent candidate_i = qs_pivot_graph_head_nth( info->numeric_graph,i,j );
-		struct QsMetadata* candidate_meta = qs_pivot_graph_meta( info->numeric_graph,candidate_i );
+		QsComponent candidate_i = qs_pivot_graph_head_nth( info->graph,i,j );
+		struct QsMetadata* candidate_meta = qs_pivot_graph_meta( info->graph,candidate_i );
 
 		if( candidate_meta ) {
 			const bool suitable_besides_not_self = ( candidate_meta->solved || candidate_meta->order<meta->order )||( despair &&( despair>=candidate_meta->consideration ) );
@@ -32,12 +31,12 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair,QsTermina
 				j_self = j;
 			} else if( suitable_besides_not_self ) {
 				DBG_PRINT_2( " Candidate %i (%hi,%s)\n",info->rd,candidate_meta->order,candidate_meta->consideration,candidate_meta->solved?"true":"false" );
-				qs_pivot_graph_terminate_nth( info->numeric_graph,i,j );
+				qs_pivot_graph_terminate_nth( info->graph,i,j,true );
 
 				if( !waiter )
-					waiter = qs_terminal_group_new( qs_pivot_graph_n_refs( info->numeric_graph,i ) );
+					waiter = qs_terminal_group_new( qs_pivot_graph_n_refs( info->graph,i ) );
 
-				qs_terminal_group_push( waiter,(QsTerminal)qs_pivot_graph_operand_nth( info->numeric_graph,i,j ) );
+				qs_terminal_group_push( waiter,(QsTerminal)qs_pivot_graph_operand_nth( info->graph,i,j,true ) );
 			}
 		}
 
@@ -53,8 +52,8 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair,QsTermina
 
 				if( ( val_term = qs_terminal_group_pop( waiter ) ) ) {
 					unsigned candidate_j;
-					for( candidate_j = 0; candidate_j<qs_pivot_graph_n_refs( info->numeric_graph,i ); candidate_j++ )
-						if( qs_pivot_graph_operand_nth( info->numeric_graph,i,candidate_j )==(QsOperand)val_term )
+					for( candidate_j = 0; candidate_j<qs_pivot_graph_n_refs( info->graph,i ); candidate_j++ )
+						if( qs_pivot_graph_operand_nth( info->graph,i,candidate_j,true )==(QsOperand)val_term )
 							break;
 
 					DBG_PRINT_2( " Operand %i is ready (%i remaining)\n",info->rd,candidate_j,qs_terminal_group_count( waiter ) );
@@ -63,17 +62,17 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair,QsTermina
 					qs_terminal_release( val_term );
 
 					if( !is_zero ) {
-						next_i = qs_pivot_graph_head_nth( info->numeric_graph,i,candidate_j );
-						next_meta = qs_pivot_graph_meta( info->numeric_graph,next_i );
+						next_i = qs_pivot_graph_head_nth( info->graph,i,candidate_j );
+						next_meta = qs_pivot_graph_meta( info->graph,next_i );
 					}
 				}
 
-				if( !next_meta && j_next==qs_pivot_graph_n_refs( info->numeric_graph,i ) ) {
+				if( !next_meta && j_next==qs_pivot_graph_n_refs( info->graph,i ) ) {
 					DBG_PRINT_2( " No more additional candidates, waiting\n",info->rd );
 					qs_terminal_group_wait( waiter );
 					j = j_next - 1;
 				}
-			} while( !next_meta && j_next==qs_pivot_graph_n_refs( info->numeric_graph,i )&& qs_terminal_group_count( waiter ) );
+			} while( !next_meta && j_next==qs_pivot_graph_n_refs( info->graph,i )&& qs_terminal_group_count( waiter ) );
 		j = j_next;
 	}
 
@@ -110,11 +109,11 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair,QsTermina
 		if( !meta->touched ) {
 			/* We bake neither the relay nor the collect, because we will
 			 * eventually bake the current pivot on normalize. */
-			qs_pivot_graph_relay( info->numeric_graph,i,next_i );
+			qs_pivot_graph_relay( info->graph,i,next_i );
 
-			DBG_PRINT_2( "Collecting %i operands\n",info->rd,qs_pivot_graph_n_heads( info->numeric_graph,i ) );
-			for( j = 0; j<qs_pivot_graph_n_refs( info->numeric_graph,i ); j++ )
-				qs_pivot_graph_collect( info->numeric_graph,i,qs_pivot_graph_head_nth( info->numeric_graph,i,j ) );
+			DBG_PRINT_2( "Collecting %i operands\n",info->rd,qs_pivot_graph_n_refs( info->graph,i ) );
+			for( j = 0; j<qs_pivot_graph_n_refs( info->graph,i ); j++ )
+				qs_pivot_graph_collect( info->graph,i,qs_pivot_graph_head_nth( info->graph,i,j ) );
 		}
 
 		meta->touched = true;
@@ -132,13 +131,15 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair,QsTermina
 		if( !meta->solved ) {
 			if( self_found ) {
 				DBG_PRINT( "Normalizing %i for substitution\n",info->rd,meta->order );
-				qs_pivot_graph_terminate_nth( info->numeric_graph,i,j_self );
+				qs_pivot_graph_terminate_nth( info->graph,i,j_self,true );
 
-				bool is_zero = qs_coefficient_is_zero( qs_terminal_acquire( qs_terminal_wait( (QsTerminal)qs_pivot_graph_operand_nth( info->numeric_graph,i,j_self ) ) ) );
-				qs_terminal_release( (QsTerminal)qs_pivot_graph_operand_nth( info->numeric_graph,i,j_self ) );
+				QsTerminal self = (QsTerminal)qs_pivot_graph_operand_nth( info->graph,i,j_self,true );
+
+				bool is_zero = qs_coefficient_is_zero( qs_terminal_acquire( qs_terminal_wait( self ) ) );
+				qs_terminal_release( self );
 
 				if( !is_zero ) {
-					qs_pivot_graph_normalize( info->numeric_graph,i );
+					qs_pivot_graph_normalize( info->graph,i );
 
 					meta->solved = true;
 
@@ -159,7 +160,7 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair,QsTermina
 }
 
 void cks_solve( struct CKSInfo* info,QsComponent i ) {
-	struct QsMetadata* meta = qs_pivot_graph_meta( info->numeric_graph,i );
+	struct QsMetadata* meta = qs_pivot_graph_meta( info->graph,i );
 	if( !meta )
 		return;
 
