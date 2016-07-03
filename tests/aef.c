@@ -64,8 +64,8 @@ int main( int argv,char* argc[ ] ) {
 	unsigned p_terminal = 100;
 	unsigned p_intermediate = 80;
 
-	unsigned n_workers = 4;
-	unsigned targets_max = 400;
+	unsigned n_workers = 3;
+	unsigned targets_max = 300;
 
 	unsigned n_symb_strings = sizeof (symb_strings)/sizeof symb_strings[ 0 ];
 	const unsigned n_coeffs = sizeof (coeff_strings)/sizeof coeff_strings[ 0 ];
@@ -85,9 +85,14 @@ int main( int argv,char* argc[ ] ) {
 	printf( "Creating original QsCoefficients...\n" );
 	unsigned name = 0;
 	for( j = 0; j<n_coeffs; j++ ) {
-		printf( "c%i = %s\n",name,coeff_strings[ j ] );
 		QsCoefficient coeff = qs_coefficient_new_from_binary( coeff_strings[ j ],strlen( coeff_strings[ j ] ) );
-		push( &terminals,(struct Operand){ name++,(QsOperand)qs_operand_new_from_coefficient( coeff ) } );
+
+		QsTerminal original = qs_operand_new( NULL,NULL );
+		qs_terminal_load( original,coeff );
+
+		printf( "c%i (%p) = %s\n",name,original,coeff_strings[ j ] );
+
+		push( &terminals,(struct Operand){ name++,(QsOperand)original } );
 	}
 
 	printf( "Starting random sampling of %i terminal coefficients...\n",targets_max );
@@ -101,7 +106,6 @@ int main( int argv,char* argc[ ] ) {
 
 		QsOperation op = ops[ rand( )%n_ops ];
 
-		printf( "c%i = ",name );
 		for( j = 0; j<combine_count; j++ ) {
 			bool use_terminal = intermediates.n_operands==0 || ( rand( )%( intermediates.n_operands + terminals.n_operands ) )>intermediates.n_operands;
 
@@ -130,13 +134,13 @@ int main( int argv,char* argc[ ] ) {
 
 		bool bake = rand( )%( p_terminal + p_intermediate )<p_terminal;
 		if( bake ) {
-			printf( " (baked)\n" );
-			QsTerminal result = qs_operand_bake( combine_count,combination,aef,op );
+			QsTerminal result = qs_operand_bake( combine_count,combination,op,aef,NULL,NULL );
+			printf( " = c%i (%p) baked\n",name,result );
 
 			push( &terminals,(struct Operand){ name,(QsOperand)result } );
 		} else {
-			printf( "\n" );
 			QsIntermediate result = qs_operand_link( combine_count,combination,op );
+			printf( " = c%i (%p)\n",name,result );
 
 			push( &intermediates,(struct Operand){ name,(QsOperand)result } );
 		}
@@ -151,8 +155,9 @@ int main( int argv,char* argc[ ] ) {
 	printf( "Closing intermediates...\n" );
 	while( intermediates.n_operands ) {
 		struct Operand target = pop_rand( &intermediates );
-		printf( "c%i = c%i\n",name,target.name );
-		push( &terminals,(struct Operand){ name++,(QsOperand)qs_operand_bake( 1,(QsOperand[ ]){ target.value },aef,QS_OPERATION_ADD ) } );
+		QsTerminal termination = qs_operand_bake( 1,(QsOperand[ ]){ target.value },QS_OPERATION_ADD,aef,NULL,NULL );
+		push( &terminals,(struct Operand){ name++,(QsOperand)termination } );
+		printf( "c%i = c%i (%p)\n",target.name,name - 1,termination );
 		qs_operand_unref( target.value );
 	}
 
@@ -165,12 +170,16 @@ int main( int argv,char* argc[ ] ) {
 	printf( "Waiting for terminals...\n" );
 	while( terminals.n_operands ) {
 		struct Operand target = pop_rand( &terminals );
-		QsCoefficient result = qs_terminal_wait( (QsTerminal*)( &target.value ),1,NULL );
+		QsTerminal result_terminal = qs_terminal_wait( (QsTerminal)( target.value ) );
+
+		QsCoefficient result = qs_terminal_acquire( result_terminal );
 
 		char* result_str;
 		qs_coefficient_print( result,&result_str );
-		printf( "c%i = %s\n",target.name,result_str );
+		printf( "c%i = [result suppressed]\n",target.name );
 		free( result_str );
+
+		qs_terminal_release( result_terminal );
 
 		qs_operand_unref( target.value );
 	}

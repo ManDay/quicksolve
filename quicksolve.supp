@@ -2,9 +2,8 @@
    atomic_compare_exchange_strong_false_positive
    Memcheck:Cond
    fun:update_dvalue
-   fun:expression_independ
-   fun:qs_operand_bake
-   fun:qs_pivot_graph_normalize
+	 ...
+   fun:terminal_decrease_adc
 	 ...
    fun:cks
 }
@@ -12,19 +11,8 @@
    atomic_compare_exchange_strong_false_positive
    Memcheck:Cond
    fun:update_dvalue
-   fun:expression_independ
-   fun:qs_operand_bake
-   fun:qs_operand_terminate
-   fun:qs_pivot_graph_relay
-   ...
-   fun:cks
-}
-{
-   atomic_compare_exchange_strong_false_positive
-   Memcheck:Cond
-   fun:update_dvalue
 	 ...
-   fun:expression_independ
+   fun:terminal_decrease_adc
    fun:worker
    fun:start_thread
    fun:clone
