@@ -487,8 +487,13 @@ void qs_pivot_graph_terminate_all( QsPivotGraph g,QsComponent i ) {
 
 	int j;
 	if( target )
-		for( j = 0; j<target->n_refs; j++ )
+		for( j = 0; j<target->n_refs; j++ ) {
 			target->refs[ j ].coefficient = (QsOperand)qs_operand_terminate( target->refs[ j ].coefficient,g->aef,g->memory.mgr,COEFFICIENT_META_NEW( g ) );
+
+			/* TODO: Very, very ugly - same as QS_OPERAND_ALLOW_DISCARD */
+			target->refs[ j ].numeric = (QsOperand)qs_operand_terminate( target->refs[ j ].numeric,g->aef,NULL,NULL );
+		}
+
 }
 
 void qs_pivot_graph_release( QsPivotGraph g,QsComponent i ) {
@@ -514,6 +519,9 @@ struct QsReflist qs_pivot_graph_acquire( QsPivotGraph g,QsComponent i ) {
 		while( j<target->n_refs ) {
 			result.references[ j ].head = target->refs[ j ].head;
 			result.references[ j ].coefficient = qs_terminal_acquire( qs_terminal_wait( (QsTerminal)target->refs[ j ].coefficient ) );
+
+/* TODO: Very, very ugly - same as QS_OPERAND_ALLOW_DISCARD */
+			qs_terminal_wait( (QsTerminal)target->refs[ j ].numeric );
 
 			bool is_zero = qs_coefficient_is_zero( result.references[ j ].coefficient );
 

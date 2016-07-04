@@ -10,6 +10,8 @@
 #include <assert.h>
 
 #define QS_TERMINAL_LINK( t ) ( t->result->link )
+#define MAX_ADC ( 1<<( ( 8*sizeof (ADC) )- 2 ) )
+#define NO_DEPENDER NULL
 
 #if DBG_LEVEL>0
 # include <stdio.h>
@@ -18,6 +20,8 @@
 #if DBG_LEVEL>1
 #	define OP2STR( op ) ( (op)==QS_OPERATION_ADD?"ADD":(op)==QS_OPERATION_MUL?"MUL":(op)==QS_OPERATION_SUB?"SUB":(op)==QS_OPERATION_DIV?"DIV":"" )
 #endif
+
+#define QS_OPERAND_ALLOW_DISCARD
 
 typedef struct Expression* Expression;
 typedef struct BakedExpression* BakedExpression;
@@ -410,6 +414,7 @@ static QsCompound qs_operand_discoverer( Expression e,unsigned j,bool* is_expres
 	// Polymorphic behaviour
 	if( e->operands[ j ]->is_terminal ) {
 		QsTerminal operand = (QsTerminal)e->operands[ j ];
+		assert( operand->is_result );
 
 		if( is_expression )
 			*is_expression = false;
@@ -500,8 +505,10 @@ static void remove_depender( QsTerminal dependee,QsTerminal depender ) {
 	for( j = 0; j<dependee->dependers.n_operands; j++ )
 		if( dependee->dependers.operands[ j ]==depender )
 			break;
+
+	//printf( "Removed %p at %i from %p (%li)\n",depender,j,dependee,pthread_self( ) );
 			
-	dependee->dependers.operands[ j ]= NULL;
+	dependee->dependers.operands[ j ]= NO_DEPENDER;
 
 	pthread_spin_unlock( &dependee->dependers_lock );
 	
@@ -515,11 +522,11 @@ static void remove_depender( QsTerminal dependee,QsTerminal depender ) {
 	j = 0;
 
 	pthread_spin_lock( &dependee->dvalue.lock );
+	pthread_spin_lock( &dependee->dependers_lock );
 	while( dependee->dvalue.current_removal==depender && j<dependee->dependers.n_operands ) {
-		pthread_spin_lock( &dependee->dependers_lock );
 		pthread_spin_unlock( &dependee->dvalue.lock );
 
-		if( dependee->dependers.operands[ j ] ) {
+		if( dependee->dependers.operands[ j ]!=NO_DEPENDER ) {
 			assert( !dependee->dependers.operands[ j ]->is_result );
 			BakedExpression target = dependee->dependers.operands[ j ]->expression;
 
@@ -529,12 +536,14 @@ static void remove_depender( QsTerminal dependee,QsTerminal depender ) {
 				minimal_adc = adc;
 		}
 
-	
+		pthread_spin_unlock( &dependee->dependers_lock );
+
 		j++;
 
 		pthread_spin_lock( &dependee->dvalue.lock );
-		pthread_spin_unlock( &dependee->dependers_lock );
+		pthread_spin_lock( &dependee->dependers_lock );
 	}
+	pthread_spin_unlock( &dependee->dependers_lock );
 
 	if( dependee->dvalue.value_on_hold<minimal_adc )
 		dependee->dvalue.value = dependee->dvalue.value_on_hold;
@@ -609,14 +618,20 @@ static void* worker( void* udata ) {
 				target->manager->memory_callback( change,false,target->manager->upointer );
 			}
 
+/* n_dependers counts exactly which (namely those with index <
+ * n_dependers in dependers.operands) and how many operands do depend on
+ * the currently finished QsTerminal and have consumed ADC, i.e. await
+ * reduction of their ADC. */
 			unsigned n_dependers = target->dependers.n_operands;
-
-			//printf( "Evaluated %p\n",target );
 
 /* After the unlock, any references from the frontend may be dropped.
  * Unless there are references held from dependers, we may no longer
  * refer to the target. */
 			pthread_rwlock_unlock( &target->lock );
+
+#ifdef QS_OPERAND_ALLOW_DISCARD
+			qs_operand_unref( (QsOperand)target );
+#endif
 
 			QsTerminalGroup waiter = src->waiter;
 
@@ -645,6 +660,8 @@ static void* worker( void* udata ) {
 				}
 			}
 
+			//printf( "Evaluated %p, decreasing ADCs (%li) {\n",target,pthread_self( ) );
+
 			int j;
 			for( j = 0; j<n_dependers; j++ ) {
 				pthread_spin_lock( &target->dependers_lock );
@@ -653,6 +670,8 @@ static void* worker( void* udata ) {
 
 				terminal_decrease_adc( depender,1,0 );
 			}
+
+			//printf( "}\n" );
 
 			expression_clean( &src->expression );
 			adc_data_unref( src->adc );
@@ -693,10 +712,13 @@ static void terminal_add_dependency( QsTerminal dependee,QsTerminal depender ) {
 	pthread_spin_lock( &dependee->dependers_lock );
 	dependee->dependers.operands = realloc( dependee->dependers.operands,( dependee->dependers.n_operands + 1 )*sizeof (QsTerminal) );
 	dependee->dependers.operands[ dependee->dependers.n_operands ] = depender;
-	dependee->dependers.n_operands++;
-	pthread_spin_unlock( &dependee->dependers_lock );
 
 	pthread_rwlock_rdlock( &dependee->lock );
+
+	dependee->dependers.n_operands++;
+	//printf( "Added %p at %i to %p (%li)\n",dependee->dependers.operands[ dependee->dependers.n_operands - 1 ],dependee->dependers.n_operands - 1,dependee,pthread_self( ) );
+	pthread_spin_unlock( &dependee->dependers_lock );
+
 	if( !dependee->is_result ) {
 		ADCData const dependee_adcd = dependee->expression->adc;
 		ADCData const depender_adcd = depender->expression->adc;
@@ -707,7 +729,9 @@ static void terminal_add_dependency( QsTerminal dependee,QsTerminal depender ) {
 		dependee_adcd->contributions[ dependee->dependers.n_operands - 1 ]= dependee_adc;
 		pthread_spin_unlock( &dependee_adcd->adc_contribution_lock );
 
-		atomic_fetch_add_explicit( &depender_adcd->adc,dependee_adc + 1,memory_order_release );
+		ADC old_adc = atomic_fetch_add_explicit( &depender_adcd->adc,dependee_adc + 1,memory_order_release );
+
+		assert( old_adc<MAX_ADC &&( dependee_adc + 1 )<MAX_ADC );
 	}
 	pthread_rwlock_unlock( &dependee->lock );
 }
@@ -731,7 +755,11 @@ static void update_dvalue( QsTerminal target,ADC adc ) {
 QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsOperation op,QsAEF queue,QsTerminalMgr m,QsTerminalMeta id ) {
 	QsTerminal result = malloc( sizeof (struct QsTerminal) +( id?m->identifier_size:0 ) );
 
+#ifdef QS_OPERAND_ALLOW_DISCARD
+	atomic_init( &result->operand.refcount,2 );
+#else
 	atomic_init( &result->operand.refcount,1 );
+#endif
 
 	pthread_rwlock_init( &result->lock,NULL );
 	pthread_spin_init( &result->dependers_lock,PTHREAD_PROCESS_PRIVATE );
@@ -905,6 +933,7 @@ static void expression_clean( Expression e ) {
 
 void qs_operand_unref( QsOperand o ) {
 	if( atomic_fetch_sub_explicit( &o->refcount,1,memory_order_acq_rel )==1 ) {
+		//printf( "Finalizing %p\n",o );
 		DBG_PRINT_3( "Destroying operand %p\n",0,o );
 		if( o->is_terminal ) {
 			QsTerminal target = (QsTerminal)o;
@@ -956,7 +985,9 @@ void qs_operand_unref( QsOperand o ) {
 			 * dependency chain (and we did not loose any references) and
 			 * could therefore still be made use of, the depending operands
 			 * would hold a reference. */
+#ifndef QS_OPERAND_ALLOW_DISCARD
 			assert( target->debug_used );
+#endif
 
 			/* The tails cache is non NULL for immediate operands to
 			 * QsTerminals */
@@ -988,40 +1019,37 @@ static void terminal_decrease_adc( QsTerminal t,unsigned decrement,unsigned rd )
 	ADCData adcd = adc_data_ref( e->adc );
 	ADC adc = atomic_load_explicit( &adcd->adc,memory_order_relaxed );
 
+	assert( adc>=decrement );
+
 /* Update of D-Values is performed approximately in that it may happen
- * that two threads tentatively read the same ADC although both
- * would decrease the ADC successively. It is performed with that
- * approximate ADC because doing it after decrement of the ADC would
- * require us to hold a reference to the QsTerminal in order to prevent
- * it from getting finalized. The tryrdlock at this place only protects
- * against propagating to D-Values in case the QsTerminal is still under
- * construction. */
-	if( !pthread_rwlock_tryrdlock( &t->lock ) ) {
+ * that two threads tentatively read the same ADC although both would
+ * decrease the ADC successively. It is performed with that approximate
+ * ADC because doing it after decrement of the ADC would require us to
+ * hold a reference to the QsTerminal in order to prevent it from
+ * getting finalized. The tryrdlock at this place only protects against
+ * propagating to D-Values in case the QsTerminal is still under
+ * construction. If the predicted ADC is 0, then certainly it is zero
+ * and we can skip the update of the D-Value because the QsTerminal will
+ * be removed by remove_depender from within aef_push_independent
+ * anyway. */
+	if( adc - decrement>0 && !pthread_rwlock_tryrdlock( &t->lock ) ) {
 		int j;
 		for( j = 0; j<e->expression.n_operands; j++ ) {
 			QsOperand next_raw = e->expression.operands[ j ];
 			
 			if( next_raw->is_terminal )
-				update_dvalue( (QsTerminal)next_raw,adc );
+				update_dvalue( (QsTerminal)next_raw,adc - decrement );
 			else {
 				QsIntermediate next = (QsIntermediate)next_raw;
 
 				int k;
 				for( k = 0; k<next->cache_tails->n_operands; k++ )
-					update_dvalue( next->cache_tails->operands[ k ],adc );
+					update_dvalue( next->cache_tails->operands[ k ],adc - decrement );
 			}
 		}
 
 		pthread_rwlock_unlock( &t->lock );
 	}
-
-/* After this point, the BakedExpression may no longer be assumed to
- * exist, because it may already have been evaluated. However, we keep a
- * reference to the associated list of dependencies in order to
- * propagate ADC changes correctly.
- * As for the terminal, we know that there is a reference as a long as
- * there is an unevaluated depender. */
-	pthread_spin_lock( &adcd->adc_contribution_lock );
 
 /* After decrement of the ADC other threads which consume the result and
  * unref the operand may run. We must thus assume that it has already
@@ -1038,12 +1066,20 @@ static void terminal_decrease_adc( QsTerminal t,unsigned decrement,unsigned rd )
  * b) If another thread does the final decrement, then the associated
  * decrement happens after ours and, because it happens under the same
  * lock, even after the unlock, so we are save as well. */
+	pthread_spin_lock( &adcd->adc_contribution_lock );
 	pthread_spin_lock( &t->dependers_lock );
 	unsigned n_dependers_at_decrease = t->dependers.n_operands;
+/* After this point, the BakedExpression may no longer be assumed to
+ * exist, because it may already have been evaluated. However, we keep a
+ * reference to the associated list of dependencies in order to
+ * propagate ADC changes correctly.
+ * As for the terminal, we know that there is a reference as a long as
+ * there is an unevaluated depender. */
 	adc = atomic_fetch_sub_explicit( &adcd->adc,decrement,memory_order_relaxed )- decrement;
 	pthread_spin_unlock( &t->dependers_lock );
-
 	pthread_spin_unlock( &adcd->adc_contribution_lock );
+
+	//printf( "%*s %p: %i -> %i (%li) {\n",rd,"",t,adc + decrement,adc,pthread_self( ) );
 
 	if( adc==0 ) 
 		aef_push_independent( e->queue,t );
@@ -1059,6 +1095,7 @@ static void terminal_decrease_adc( QsTerminal t,unsigned decrement,unsigned rd )
 		const unsigned discrepancy_limit = 1<<rd;
 
 		if( discrepancy>=discrepancy_limit ) {
+			const ADC debug_contribution_before = adcd->contributions[ j ];
 			adcd->contributions[ j ]= adc;
 			pthread_spin_unlock( &adcd->adc_contribution_lock );
 
@@ -1066,6 +1103,8 @@ static void terminal_decrease_adc( QsTerminal t,unsigned decrement,unsigned rd )
 		} else
 			pthread_spin_unlock( &adcd->adc_contribution_lock );
 	}
+
+	//printf( "%*s } (%li)\n",rd,"",pthread_self( ) );
 
 	adc_data_unref( adcd );
 }
