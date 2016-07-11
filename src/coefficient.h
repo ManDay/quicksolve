@@ -50,7 +50,8 @@ void qs_evaluator_options_destroy( QsEvaluatorOptions );
 
 QsEvaluator qs_evaluator_new( QsCompoundDiscoverer,QsEvaluatorOptions );
 void qs_evaluator_register( QsEvaluator,char* const[ ],unsigned );
-QsCoefficient qs_evaluator_evaluate( QsEvaluator,QsCompound,QsOperation );
+void qs_evaluator_evaluate( QsEvaluator,QsCompound,QsOperation );
+QsCoefficient qs_evaluator_receive( QsEvaluator );
 void qs_evaluator_destroy( QsEvaluator );
 
 QsCoefficient qs_coefficient_new_from_binary( const char*,size_t );

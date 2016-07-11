@@ -528,6 +528,7 @@ struct QsReflist qs_pivot_graph_acquire( QsPivotGraph g,QsComponent i ) {
 			if( is_zero ) {
 				qs_terminal_release( (QsTerminal)( target->refs[ j ].coefficient ) );
 				qs_operand_unref( target->refs[ j ].coefficient );
+				qs_operand_unref( target->refs[ j ].numeric );
 				target->refs[ j ]= target->refs[ target->n_refs - 1 ];
 				target->n_refs--;
 				result.n_references--;

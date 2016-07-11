@@ -64,8 +64,8 @@ int main( int argv,char* argc[ ] ) {
 	unsigned p_terminal = 100;
 	unsigned p_intermediate = 80;
 
-	unsigned n_workers = 3;
-	unsigned targets_max = 300;
+	unsigned n_workers = 4;
+	unsigned targets_max = 200;
 
 	unsigned n_symb_strings = sizeof (symb_strings)/sizeof symb_strings[ 0 ];
 	const unsigned n_coeffs = sizeof (coeff_strings)/sizeof coeff_strings[ 0 ];
@@ -101,7 +101,7 @@ int main( int argv,char* argc[ ] ) {
 		QsOperand combination[ 4 ];
 		bool is_intermediate[ 4 ];
 
-		const QsOperation ops[ ]= { QS_OPERATION_ADD,QS_OPERATION_MUL,QS_OPERATION_SUB,QS_OPERATION_DIV };
+		const QsOperation ops[ ]= { QS_OPERATION_ADD,QS_OPERATION_SUB,QS_OPERATION_MUL,QS_OPERATION_ADD };
 		unsigned n_ops = sizeof (ops)/sizeof ops[ 0 ];
 
 		QsOperation op = ops[ rand( )%n_ops ];
@@ -161,6 +161,7 @@ int main( int argv,char* argc[ ] ) {
 		qs_operand_unref( target.value );
 	}
 
+	usleep( 1e6 );
 	printf( "Spawning workers...\n" );
 	for( j = 0; j<n_workers; j++ )
 		qs_aef_spawn( aef,opts );
@@ -176,7 +177,7 @@ int main( int argv,char* argc[ ] ) {
 
 		char* result_str;
 		qs_coefficient_print( result,&result_str );
-		printf( "c%i = [result suppressed]\n",target.name );
+		printf( "c%i = suppressed\n",target.name,result_str );
 		free( result_str );
 
 		qs_terminal_release( result_terminal );
