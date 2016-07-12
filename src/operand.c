@@ -10,7 +10,7 @@
 #include <assert.h>
 
 #define QS_TERMINAL_LINK( t ) ( t->result->link )
-#define MAX_ADC ( ( 1<<( ( 8*sizeof (ADCValue) )- 1 ) )- 1 )
+#define MAX_ADC ( ( ( (ADCValue)1 )<<( ( CHAR_BIT*sizeof (ADCValue) )- 1 ) )- 1 )
 #define NO_DEPENDER NULL
 
 #if DBG_LEVEL>0
@@ -26,7 +26,7 @@
 typedef struct Expression* Expression;
 typedef struct BakedExpression* BakedExpression;
 typedef struct TerminalData* TerminalData;
-typedef unsigned char ADCValue;
+typedef unsigned ADCValue;
 typedef struct {
 	bool overflow;
 	ADCValue value;
@@ -298,13 +298,11 @@ void qs_terminal_load( QsTerminal t,QsCoefficient c ) {
 	result->coefficient = c;
 
 	if( t->manager ) {
-		if( t->id ) {
+		if( t->id && result->refcount==0 ) {
 /* External locking should and must assure that only one of
  * qs_terminal_load and qs_terminal_aquired is ran at the same time. All
  * other accesses are then concurrent reads gated by qs_terminal_aquired
  * and are save without locking. */
-			assert( result->refcount==0 );
-
 			pthread_mutex_lock( &t->manager->queue->lock );
 			qs_terminal_queue_add( t->manager->queue,t );
 			pthread_mutex_unlock( &t->manager->queue->lock );
@@ -739,6 +737,8 @@ static void terminal_add_dependency( QsTerminal dependee,QsTerminal depender ) {
 		dependee_adcd->contributions = realloc( dependee_adcd->contributions,dependee->dependers.n_operands*sizeof (ADC) );
 		dependee_adcd->contributions[ dependee->dependers.n_operands - 1 ]= dependee_adc;
 
+		pthread_spin_unlock( &dependee->dependers_lock );
+
 		pthread_spin_lock( &depender_adcd->adc_contribution_lock );
 		pthread_spin_unlock( &dependee_adcd->adc_contribution_lock );
 
@@ -752,10 +752,10 @@ static void terminal_add_dependency( QsTerminal dependee,QsTerminal depender ) {
 		pthread_spin_unlock( &depender_adcd->adc_contribution_lock );
 
 		atomic_fetch_add_explicit( &depender->expression->dc,1,memory_order_release );
-	}
+	} else
+		pthread_spin_unlock( &dependee->dependers_lock );
 
 	pthread_rwlock_unlock( &dependee->lock );
-	pthread_spin_unlock( &dependee->dependers_lock );
 }
 
 static void update_dvalue( QsTerminal target,ADCValue adc ) {
@@ -1077,53 +1077,6 @@ static ADC recollect_adc( QsTerminal t ) {
 }
 
 static void terminal_decrease_adc( QsTerminal t,pthread_spinlock_t* parent_lock,unsigned decrement,unsigned rd ) {
-/* There would be a problem if a thread A adjusts the contribution and
- * dispatches the associated decrement by X. But before the decrement is
- * affected, another thread (which previously received a decrement Y
- * from overflow state) recalcuates the ADC to non-overflow state and
- * consumes the contribution which was already adjusted by thread A.
- * Then thread A would, when affecting the decrement, decrement the
- * already consistent state of the ADC too much.
- *
- * In order to prevent this situation, the whole process of adjusting
- * the contribution and decreasing the ADC on the depender is locked as
- * once. That way, the parent does not have to worry about the state
- * being overflown or not and dispatch a decrement obliviously. Then,
- * the ADC is either
- *
- * a) considered overflown (although this may already have been
- * corrected or currently being addressed) in which case a (possibly
- * superflous, if the overflow has already been corrected)
- * re-calculation performed by thread A.
- *
- * A recalculation of thread A involves the parent's ADC in a specific
- * state which may or may not be current when the result of the
- * recalculation is to be applied.
- *
- * For it not to be current, another thread B must have modified it
- * between the read and writing the result by A.
- *
- * a.1) If B finds the ADC to be overflowing, then this amounts
- * to just another re-calculation. With sequentially consistent ordering
- * of the modifications, if there are multiple re-calculations from
- * different threads, the one which produces the lowest ADC is based
- * upon the most recent ADCs among all threads and takes precedence.
- * Therefore, another recalculation just repeates this very argument.
- *
- * a.2) If thread B finds the ADC to be non-overflowing, then this
- * implies that there was a thread C which performed the re-calculation
- * and wrote its result before thread B and consequently, before thread
- * A. In this case, when thread A wants to write the result it finds the
- * current ADC non-overflowing and will discard its value.
- *
- * b) not overflown in which case the decrement is performed.
- *
- * When the contribution to a depender is set and a decrement is
- * dispatched, the contribution lock on the dispatching QsTerminal is
- * held. If there is another thread which performs or performed a
- * recalulation, its result will either be written before the decrement
- * is calculated or discarded.
- */
 	assert( !t->is_result );
 
 	BakedExpression e = t->expression;
@@ -1131,7 +1084,6 @@ static void terminal_decrease_adc( QsTerminal t,pthread_spinlock_t* parent_lock,
 	unsigned n_dependers_at_change = 0;
 
 	ADC adc = atomic_load_explicit( &adcd->adc,memory_order_relaxed );
-	ADC debug_old = adc;
 
 	if( adc.overflow ) {
 		if( parent_lock )
@@ -1184,7 +1136,6 @@ static void terminal_decrease_adc( QsTerminal t,pthread_spinlock_t* parent_lock,
 		adc = atomic_load_explicit( &adcd->adc,memory_order_relaxed );
 
 		if( adcd->contributions[ j ].overflow ) {
-			ADC debug_before = adcd->contributions[ j ];
 			adcd->contributions[ j ]= adc;
 
 			ADC child_adc = atomic_load( &depender->expression->adc.adc );
@@ -1196,7 +1147,6 @@ static void terminal_decrease_adc( QsTerminal t,pthread_spinlock_t* parent_lock,
 			const ADCValue discrepancy_limit = 1<<rd;
 
 			if( discrepancy>=discrepancy_limit ) {
-				ADC debug_before = adcd->contributions[ j ];
 				adcd->contributions[ j ]= adc;
 				terminal_decrease_adc( depender,&adcd->adc_contribution_lock,discrepancy,rd + 1 );
 			} else

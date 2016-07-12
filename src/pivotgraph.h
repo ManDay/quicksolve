@@ -41,7 +41,8 @@ void qs_pivot_graph_collect( QsPivotGraph,QsComponent,QsComponent );
 void qs_pivot_graph_normalize( QsPivotGraph,QsComponent );
 unsigned qs_pivot_graph_n_refs( QsPivotGraph,QsComponent );
 QsComponent qs_pivot_graph_head_nth( QsPivotGraph,QsComponent,unsigned );
+void qs_pivot_graph_delete_nth( QsPivotGraph,QsComponent,unsigned );
 QsOperand qs_pivot_graph_operand_nth( QsPivotGraph g,QsComponent,unsigned,bool );
-void qs_pivot_graph_terminate_nth( QsPivotGraph g,QsComponent,unsigned,bool );
+QsTerminal qs_pivot_graph_terminate_nth( QsPivotGraph g,QsComponent,unsigned,bool );
 
 #endif

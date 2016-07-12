@@ -405,13 +405,13 @@ void qs_pivot_graph_collect( QsPivotGraph g,QsComponent tail,QsComponent head ) 
 	free( operands_numeric );
 }
 
-void qs_pivot_graph_terminate_nth( QsPivotGraph g,QsComponent tail,unsigned n,bool numeric ) {
+QsTerminal qs_pivot_graph_terminate_nth( QsPivotGraph g,QsComponent tail,unsigned n,bool numeric ) {
 	Pivot* target = g->components[ tail ];
 
 	if( numeric )
-		target->refs[ n ].numeric = (QsOperand)qs_operand_terminate( target->refs[ n ].numeric,g->aef_numeric,NULL,NULL );
+		return (QsTerminal)( target->refs[ n ].numeric = (QsOperand)qs_operand_terminate( target->refs[ n ].numeric,g->aef_numeric,NULL,NULL ) );
 	else
-		target->refs[ n ].coefficient = (QsOperand)qs_operand_terminate( target->refs[ n ].coefficient,g->aef,g->memory.mgr,COEFFICIENT_META_NEW( g ) );
+		return (QsTerminal)( target->refs[ n ].coefficient = (QsOperand)qs_operand_terminate( target->refs[ n ].coefficient,g->aef,g->memory.mgr,COEFFICIENT_META_NEW( g ) ) );
 }
 
 QsComponent qs_pivot_graph_head_nth( QsPivotGraph g,QsComponent tail,unsigned n ) {
@@ -422,6 +422,13 @@ QsComponent qs_pivot_graph_head_nth( QsPivotGraph g,QsComponent tail,unsigned n 
 QsOperand qs_pivot_graph_operand_nth( QsPivotGraph g,QsComponent tail,unsigned n,bool numeric ) {
 	assert( g->components[ tail ]->n_refs>n );
 	return numeric?g->components[ tail ]->refs[ n ].numeric:g->components[ tail ]->refs[ n ].coefficient;
+}
+
+void qs_pivot_graph_delete_nth( QsPivotGraph g,QsComponent tail,unsigned n ) {
+	Pivot* target = g->components[ tail ];
+	target->n_refs--;
+	target->refs[ n ]= target->refs[ target->n_refs ];
+	target->refs = realloc( target->refs,target->n_refs*sizeof (struct Reference) );
 }
 
 unsigned qs_pivot_graph_n_refs( QsPivotGraph g,QsComponent tail ) {
