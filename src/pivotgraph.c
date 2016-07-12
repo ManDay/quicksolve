@@ -426,6 +426,10 @@ QsOperand qs_pivot_graph_operand_nth( QsPivotGraph g,QsComponent tail,unsigned n
 
 void qs_pivot_graph_delete_nth( QsPivotGraph g,QsComponent tail,unsigned n ) {
 	Pivot* target = g->components[ tail ];
+
+	qs_operand_unref( target->refs[ n ].coefficient );
+	qs_operand_unref( target->refs[ n ].numeric );
+
 	target->n_refs--;
 	target->refs[ n ]= target->refs[ target->n_refs ];
 	target->refs = realloc( target->refs,target->n_refs*sizeof (struct Reference) );
