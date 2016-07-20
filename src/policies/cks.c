@@ -24,17 +24,17 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair ) {
 	QsTerminalGroup waiter = qs_terminal_group_new( qs_pivot_graph_n_refs( info->graph,i ) );
 	QsTerminalGroup symbolic_waiter = qs_terminal_group_new( 1 );
 
-	DBG_PRINT_2( "Seaching next target in %i {\n",info->rd,meta->order );
+	DBG_PRINT_2( "Searching next target among %i in %i {\n",info->rd,qs_pivot_graph_n_refs( info->graph,i ),meta->order );
 	int j = 0;
 	while( !next_meta &&( j<qs_pivot_graph_n_refs( info->graph,i )|| qs_terminal_group_count( waiter )|| qs_terminal_group_count( symbolic_waiter ) ) ) {
 		if( j<qs_pivot_graph_n_refs( info->graph,i ) ) {
 			QsComponent candidate_i = qs_pivot_graph_head_nth( info->graph,i,j );
 			struct QsMetadata* candidate_meta = qs_pivot_graph_meta( info->graph,candidate_i );
 
-			const bool suitable = candidate_i!=i && candidate_meta &&( ( candidate_meta->solved || candidate_meta->order<meta->order )||( despair &&( despair>=candidate_meta->consideration ) ) );
+			const bool suitable = candidate_i!=i && candidate_meta &&( ( candidate_meta->solved ||( candidate_meta->order<meta->order && candidate_meta->consideration==0 ) )||( despair &&( despair>=candidate_meta->consideration ) ) );
 			
 			if( candidate_meta )
-				DBG_PRINT_2( " Considering edge #%i to %i\n",info->rd,j,candidate_meta->order );
+				DBG_PRINT_2( " Considering edge #%i to %i (%i-fold considered, despair %i)\n",info->rd,j,candidate_meta->order,candidate_meta->consideration,despair );
 
 			if( suitable )
 				qs_terminal_group_push( waiter,qs_pivot_graph_terminate_nth( info->graph,i,j,true ) );
@@ -126,7 +126,7 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair ) {
 		 * but if we haven't made any changes, solved is still true */
 		if( !meta->solved ) {
 			int j_self;
-			for( j_self = 0; j<qs_pivot_graph_n_refs( info->graph,i ); j_self++ )
+			for( j_self = 0; j_self<qs_pivot_graph_n_refs( info->graph,i ); j_self++ )
 				if( qs_pivot_graph_head_nth( info->graph,i,j_self )==i )
 					break;
 				
@@ -167,7 +167,9 @@ void cks_solve( struct CKSInfo* info,QsComponent i ) {
 
 	DBG_PRINT( "Solving for Pivot %i {\n",0,meta->order );
 	meta->consideration = 1;
+	info->rd++;
 	cks( info,i,1 );
+	info->rd--;
 	meta->consideration = 0;
 	DBG_PRINT( "}\n",0 );
 }

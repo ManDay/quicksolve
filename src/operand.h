@@ -74,7 +74,7 @@ typedef void(* QsTerminalDiscarder)( QsTerminalMeta,void* );
  */
 typedef void(* QsTerminalMemoryCallback)( size_t,bool,void* );
 
-QsAEF qs_aef_new( void );
+QsAEF qs_aef_new( size_t );
 bool qs_aef_spawn( QsAEF,QsEvaluatorOptions );
 void qs_aef_destroy( QsAEF );
 

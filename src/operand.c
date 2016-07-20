@@ -26,7 +26,7 @@
 typedef struct Expression* Expression;
 typedef struct BakedExpression* BakedExpression;
 typedef struct TerminalData* TerminalData;
-typedef unsigned ADCValue;
+typedef unsigned char ADCValue;
 typedef struct {
 	bool overflow;
 	ADCValue value;
@@ -170,6 +170,11 @@ struct QsAEF {
 	unsigned n_independent;
 	QsTerminal* independent;
 
+	pthread_mutex_t n_terminals_lock;
+	pthread_cond_t n_terminals_change;
+	size_t n_terminals;
+	size_t limit_terminals;
+
 	pthread_mutex_t operation_lock;
 	pthread_cond_t operation_change;
 
@@ -264,7 +269,6 @@ bool qs_terminal_queue_pop( QsTerminalQueue q ) {
 	}
 
 	if( target ) {
-		qs_operand_ref( (QsOperand)target );
 		qs_terminal_queue_del( q,target );
 
 /* No need to lock here with anything besides the queue's mutex. The
@@ -274,18 +278,15 @@ bool qs_terminal_queue_pop( QsTerminalQueue q ) {
 		popped = target->result->coefficient;
 		target->result->coefficient = NULL;
 
-		pthread_mutex_unlock( &q->lock );
-
 		size_t change = qs_coefficient_size( popped );
 		if( target->manager->saver )
 			target->manager->saver( popped,target->id,target->manager->upointer );
 		else
 			qs_coefficient_destroy( popped );
 		target->manager->memory_callback( change,true,target->manager->upointer );
+	}
 
-		qs_operand_unref( (QsOperand)target );
-	} else
-		pthread_mutex_unlock( &q->lock );
+	pthread_mutex_unlock( &q->lock );
 
 	return popped;
 }
@@ -373,7 +374,7 @@ bool qs_aef_spawn( QsAEF a,QsEvaluatorOptions opts ) {
 	return result;
 }
 
-QsAEF qs_aef_new( ) {
+QsAEF qs_aef_new( size_t limit_terminals  ) {
 	QsAEF result = malloc( sizeof (struct QsAEF) );
 
 	result->n_independent = 0;
@@ -382,6 +383,12 @@ QsAEF qs_aef_new( ) {
 	pthread_cond_init( &result->operation_change,NULL );
 	pthread_spin_init( &result->workers_lock,PTHREAD_PROCESS_PRIVATE );
 	result->n_workers = 0;
+
+	pthread_mutex_init( &result->n_terminals_lock,NULL );
+	pthread_cond_init( &result->n_terminals_change,NULL );
+	result->n_terminals = 0;
+	result->limit_terminals = limit_terminals;
+
 	result->workers = malloc( 0 );
 	result->termination_notice = false;
 
@@ -683,6 +690,13 @@ static void* worker( void* udata ) {
 			expression_clean( &src->expression );
 			free( src->adc.contributions );
 			free( src );
+
+			if( self->limit_terminals ) {
+				pthread_mutex_lock( &self->n_terminals_lock );
+				self->n_terminals--;
+				pthread_cond_signal( &self->n_terminals_change );
+				pthread_mutex_unlock( &self->n_terminals_lock );
+			}
 		}
 
 		pthread_mutex_lock( &self->operation_lock );
@@ -693,6 +707,16 @@ static void* worker( void* udata ) {
 	qs_evaluator_destroy( ev );
 
 	return NULL;
+}
+
+static void aef_count_terminal( QsAEF a,QsTerminal t ) {
+	if( a->limit_terminals ) {
+		pthread_mutex_lock( &a->n_terminals_lock );
+		while( a->n_terminals>=a->limit_terminals )
+			pthread_cond_wait( &a->n_terminals_change,&a->n_terminals_lock );
+		a->n_terminals++;
+		pthread_mutex_unlock( &a->n_terminals_lock );
+	}
 }
 
 struct TerminalList* terminal_list_new( ) {
@@ -773,7 +797,9 @@ static void update_dvalue( QsTerminal target,ADCValue adc ) {
 }
 
 QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsOperation op,QsAEF queue,QsTerminalMgr m,QsTerminalMeta id ) {
+
 	QsTerminal result = malloc( sizeof (struct QsTerminal) +( id?m->identifier_size:0 ) );
+	aef_count_terminal( queue,result );
 
 #ifdef QS_OPERAND_ALLOW_DISCARD
 	atomic_init( &result->operand.refcount,2 );
@@ -934,7 +960,8 @@ QsTerminal qs_operand_terminate( QsOperand o,QsAEF a,QsTerminalMgr m,QsTerminalM
 }
 
 QsOperand qs_operand_ref( QsOperand o ) {
-	atomic_fetch_add_explicit( &o->refcount,1,memory_order_acquire );
+	unsigned previous = atomic_fetch_add_explicit( &o->refcount,1,memory_order_acquire );
+	assert( previous>0 );
 	return o;
 }
 
@@ -1129,7 +1156,9 @@ static void terminal_decrease_adc( QsTerminal t,pthread_spinlock_t* parent_lock,
 
 	int j;
 	for( j = 0; j<n_dependers_at_change; j++ ) {
+		pthread_spin_lock( &t->dependers_lock );
 		QsTerminal depender = t->dependers.operands[ j ];
+		pthread_spin_unlock( &t->dependers_lock );
 
 		pthread_spin_lock( &adcd->adc_contribution_lock );
 

@@ -320,6 +320,7 @@ bool qs_pivot_graph_relay( QsPivotGraph g,QsComponent tail,QsComponent head ) {
 			for( k = 0; k<head_pivot->n_refs; k++ ) {
 				QsComponent limb_head = head_pivot->refs[ k ].head;
 				if( limb_head!=head ) {
+					assert( j_prime<head_pivot->n_refs - 1 );
 					tail_pivot->refs[ tail_pivot->n_refs - 1 + j_prime ].head = limb_head;
 
 					QsOperand limb_coefficient = (QsOperand)qs_operand_terminate( head_pivot->refs[ k ].coefficient,g->aef,g->memory.mgr,COEFFICIENT_META_NEW( g ) );
