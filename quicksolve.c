@@ -59,7 +59,7 @@ int main( const int argc,char* const argv[ ] ) {
 	FILE* const outfile = stdout;
 
 	int opt;
-	while( ( opt = getopt( argc,argv,"p:a:w:hqk:b:m:t:" ) )!=-1 ) {
+	while( ( opt = getopt( argc,argv,"p:a:hqk:b:m:t:" ) )!=-1 ) {
 		char* endptr;
 		switch( opt ) {
 		case 'p':

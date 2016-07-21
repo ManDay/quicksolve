@@ -14,15 +14,8 @@ if( NOT "${QS_INTEGRAL_POWERTYPE}" IN_LIST QS_INTEGRAL_POWERTYPE_VALID )
 	set( QS_INTEGRAL_POWERTYPE "char" CACHE STRING "Type of Powers in Database ([char],int,long)" FORCE )
 endif( )
 
-if( "${CMAKE_BUILD_TYPE}" STREQUAL "Debug" )
-	unset( QS_DEBUG_LEVEL )
-	if( NOT "${QS_DEBUG_LEVEL}" IN_LIST QS_DEBUG_LEVEL_VALID )
-		set( QS_DEBUG_LEVEL "1" CACHE STRING "Debug verbosity ([0,...,3])" FORCE )
-	endif( )
-
-else( )
-	unset( QS_DEBUG_LEVEL CACHE )
-	set( QS_DEBUG_LEVEL "0" )
+if( NOT "${QS_DEBUG_LEVEL}" IN_LIST QS_DEBUG_LEVEL_VALID )
+	set( QS_DEBUG_LEVEL "1" CACHE STRING "Debug verbosity ([0,...,3])" FORCE )
 endif( )
 
 set( QS_DEBUG_EVAL "OFF" CACHE BOOL "Write CAS communication into logfile" )
