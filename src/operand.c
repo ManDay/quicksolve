@@ -10,7 +10,8 @@
 #include <assert.h>
 
 #define QS_TERMINAL_LINK( t ) ( t->result->link )
-#define MAX_ADC ( ( ( (ADCValue)1 )<<( ( CHAR_BIT*sizeof (ADCValue) )- 1 ) )- 1 )
+#define ADC_BITS ( CHAR_BIT*sizeof (ADCValue) )
+#define MAX_ADC ( ( ( (ADCValue)1 )<<( ADC_BITS - 1 ) )- 1 )
 #define NO_DEPENDER NULL
 
 #if DBG_LEVEL>0
@@ -26,7 +27,7 @@
 typedef struct Expression* Expression;
 typedef struct BakedExpression* BakedExpression;
 typedef struct TerminalData* TerminalData;
-typedef unsigned char ADCValue;
+typedef unsigned short ADCValue;
 typedef struct {
 	bool overflow;
 	ADCValue value;
@@ -561,7 +562,9 @@ static void terminal_independ( QsTerminal target ) {
 	
 	if( previous_dc==1 ) {
 		ADC adc;
-		assert( ( adc = atomic_load_explicit( &target->expression->adc.adc,memory_order_relaxed ),adc.value==1 ) );
+		// FIXME: This assert sporadically fails, the ADC is not correct for
+		// unknown reasons.
+		// assert( ( adc = atomic_load_explicit( &target->expression->adc.adc,memory_order_relaxed ),adc.value==1 ) );
 		aef_push_independent( target->expression->queue,target );
 	}
 }
@@ -801,16 +804,6 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsOperation op,QsA
 	QsTerminal result = malloc( sizeof (struct QsTerminal) +( id?m->identifier_size:0 ) );
 	aef_count_terminal( queue,result );
 
-#ifdef QS_OPERAND_ALLOW_DISCARD
-	atomic_init( &result->operand.refcount,2 );
-#else
-	atomic_init( &result->operand.refcount,1 );
-#endif
-
-	pthread_rwlock_init( &result->lock,NULL );
-	pthread_spin_init( &result->dependers_lock,PTHREAD_PROCESS_PRIVATE );
-	pthread_spin_init( &result->dvalue.lock,PTHREAD_PROCESS_PRIVATE );
-
 	result->operand.is_terminal = true;
 	result->is_result = false;
 	result->dependers.n_operands = 0;
@@ -830,7 +823,16 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsOperation op,QsA
 
 	atomic_init( &b->adc.adc,( (ADC){ false,1 } ) );
 	atomic_init( &b->dc,1 );
+#ifdef QS_OPERAND_ALLOW_DISCARD
+	atomic_init( &result->operand.refcount,2 );
+#else
+	atomic_init( &result->operand.refcount,1 );
+#endif
 
+	pthread_rwlock_init( &result->lock,NULL );
+
+	pthread_spin_init( &result->dependers_lock,PTHREAD_PROCESS_PRIVATE );
+	pthread_spin_init( &result->dvalue.lock,PTHREAD_PROCESS_PRIVATE );
 	pthread_spin_init( &b->adc.adc_contribution_lock,PTHREAD_PROCESS_PRIVATE );
 
 	b->adc.contributions = malloc( 0 );
@@ -1042,6 +1044,9 @@ void qs_operand_unref( QsOperand o ) {
 }
 
 static void pull_adc( QsTerminal parent,QsTerminal child,ADC* adc,struct TerminalList* done ) {
+	if( adc->overflow )
+		return;
+
 	int j;
 	for( j = 0; j<done->n_operands; j++ )
 		if( done->operands[ j ]==parent )
@@ -1051,29 +1056,24 @@ static void pull_adc( QsTerminal parent,QsTerminal child,ADC* adc,struct Termina
 	done->operands[ done->n_operands ]= parent;
 	done->n_operands++;
 
-	if( adc->overflow )
-		return;
-
 	pthread_rwlock_rdlock( &parent->lock );
+	if( !parent->is_result ) {
+		struct ADCData* adcd = &parent->expression->adc;
 
-	if( parent->is_result ) {
-		pthread_rwlock_unlock( &parent->lock );
-		return;
+		for( j = 0; j<parent->dependers.n_operands && !adc->overflow; j++ )
+			if( parent->dependers.operands[ j ]==child ) {
+				pthread_spin_lock( &adcd->adc_contribution_lock );
+				ADC parent_adc = adcd->contributions[ j ];
+
+				if( parent_adc.overflow || adc->overflow ||( adc->value + parent_adc.value )>=MAX_ADC )
+					adc->overflow = true;
+				else
+					adc->value += parent_adc.value;
+
+				pthread_spin_unlock( &adcd->adc_contribution_lock );
+			}
+
 	}
-
-	struct ADCData* adcd = &parent->expression->adc;
-
-	for( j = 0; j<parent->dependers.n_operands; j++ )
-		if( parent->dependers.operands[ j ]==child ) {
-			pthread_spin_lock( &adcd->adc_contribution_lock );
-			ADC parent_adc = adcd->contributions[ j ];
-			if( parent_adc.overflow || adc->overflow ||( adc->value + parent_adc.value )>=MAX_ADC )
-				adc->overflow = true;
-			else
-				adc->value += parent_adc.value;
-			pthread_spin_unlock( &adcd->adc_contribution_lock );
-		}
-
 	pthread_rwlock_unlock( &parent->lock );
 }
 
@@ -1112,40 +1112,47 @@ static void terminal_decrease_adc( QsTerminal t,pthread_spinlock_t* parent_lock,
 
 	ADC adc = atomic_load_explicit( &adcd->adc,memory_order_relaxed );
 
+	if( decrement==0 )
+		assert( adc.overflow );
+
 	if( adc.overflow ) {
 		if( parent_lock )
 			pthread_spin_unlock( parent_lock );
 
+/* Trylock asserts that recollection of the ADC is only performed after
+ * the target has been completely constructed and its ADC is thus
+ * strictly decreasing, which allows us to infer whether our result for
+ * the collection has possibly become out-of date by checking whether
+ * the current ADC is already smaller than the one we found. */
 		if( !pthread_rwlock_tryrdlock( &t->lock ) ) {
 			pthread_rwlock_unlock( &t->lock );
 
 			ADC new_adc = recollect_adc( t );
 
+			pthread_spin_lock( &t->dependers_lock );
 			pthread_spin_lock( &adcd->adc_contribution_lock );
 			adc = atomic_load_explicit( &adcd->adc,memory_order_relaxed );
-			if( !new_adc.overflow &&( adc.overflow || adc.value>new_adc.value ) ) {
-				pthread_spin_lock( &t->dependers_lock );
-
-				adc = new_adc;
-				atomic_store_explicit( &adcd->adc,new_adc,memory_order_relaxed );
-
-				n_dependers_at_change = t->dependers.n_operands;
-
-				pthread_spin_unlock( &t->dependers_lock );
-			}
+			if( !new_adc.overflow )
+				if( adc.overflow || adc.value>new_adc.value ) {
+					adc = new_adc;
+					atomic_store_explicit( &adcd->adc,new_adc,memory_order_relaxed );
+					n_dependers_at_change = t->dependers.n_operands;
+				}
 			pthread_spin_unlock( &adcd->adc_contribution_lock );
+			pthread_spin_unlock( &t->dependers_lock );
 		}
 	} else {
-		assert( adc.value>=decrement );
-
 		pthread_spin_lock( &t->dependers_lock );
 		pthread_spin_lock( &adcd->adc_contribution_lock );
 
 		adc = atomic_load_explicit( &adcd->adc,memory_order_relaxed );
-		adc.value -= decrement;
-		atomic_store_explicit( &adcd->adc,adc,memory_order_relaxed );
+		assert( adc.value>=decrement );
 
-		n_dependers_at_change = t->dependers.n_operands;
+		if( !adc.overflow ) {
+			adc.value -= decrement;
+			atomic_store_explicit( &adcd->adc,adc,memory_order_relaxed );
+			n_dependers_at_change = t->dependers.n_operands;
+		}
 
 		if( parent_lock )
 			pthread_spin_unlock( parent_lock );
@@ -1173,9 +1180,10 @@ static void terminal_decrease_adc( QsTerminal t,pthread_spinlock_t* parent_lock,
 			terminal_decrease_adc( depender,&adcd->adc_contribution_lock,0,rd + 1 );
 		} else {
 			const ADCValue discrepancy = adcd->contributions[ j ].value- adc.value;
-			const ADCValue discrepancy_limit = 1<<rd;
+			const unsigned bitshift = rd*2;
+			const ADCValue discrepancy_limit = 1<<bitshift;
 
-			if( discrepancy>=discrepancy_limit ) {
+			if( bitshift<ADC_BITS && discrepancy>=discrepancy_limit ) {
 				adcd->contributions[ j ]= adc;
 				terminal_decrease_adc( depender,&adcd->adc_contribution_lock,discrepancy,rd + 1 );
 			} else

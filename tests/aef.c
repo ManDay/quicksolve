@@ -65,7 +65,7 @@ int main( int argv,char* argc[ ] ) {
 	unsigned p_intermediate = 80;
 
 	unsigned n_workers = 4;
-	unsigned targets_max = 200;
+	unsigned targets_max = 600;
 
 	unsigned n_symb_strings = sizeof (symb_strings)/sizeof symb_strings[ 0 ];
 	const unsigned n_coeffs = sizeof (coeff_strings)/sizeof coeff_strings[ 0 ];
@@ -80,7 +80,7 @@ int main( int argv,char* argc[ ] ) {
 	for( j = 0; j<n_symb_strings; j++ )
 		qs_evaluator_options_add( opts,symb_strings[ j ],NULL );
 
-	QsAEF aef = qs_aef_new( );
+	QsAEF aef = qs_aef_new( 0 );
 
 	printf( "Creating original QsCoefficients...\n" );
 	unsigned name = 0;

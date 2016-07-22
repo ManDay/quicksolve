@@ -26,7 +26,7 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair ) {
 
 	DBG_PRINT_2( "Determining next elimination among %i edges in %i {\n",info->rd,qs_pivot_graph_n_refs( info->graph,i ),meta->order );
 	int j = 0;
-	while( !next_meta &&( j<qs_pivot_graph_n_refs( info->graph,i )|| qs_terminal_group_count( waiter )|| qs_terminal_group_count( symbolic_waiter ) ) ) {
+	while( !next_meta &&( j<qs_pivot_graph_n_refs( info->graph,i )|| qs_terminal_group_count( waiter ) ) ) {
 		if( j<qs_pivot_graph_n_refs( info->graph,i ) ) {
 			QsComponent candidate_i = qs_pivot_graph_head_nth( info->graph,i,j );
 			struct QsMetadata* candidate_meta = qs_pivot_graph_meta( info->graph,candidate_i );
@@ -40,30 +40,8 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair ) {
 				qs_terminal_group_push( waiter,qs_pivot_graph_terminate_nth( info->graph,i,j,true ) );
 
 			j++;
-		} else {
-			if( qs_terminal_group_count( waiter ) ) {
-				DBG_PRINT_2( " All edges already considered, waiting for results\n",info->rd );
-				qs_terminal_group_wait( waiter );
-			} else {
-				DBG_PRINT_2( " Only zeroes left waiting for symbolic results {\n",info->rd );
-				qs_terminal_group_wait( symbolic_waiter );
-				QsTerminal finished = qs_terminal_group_pop( symbolic_waiter );
-				unsigned finished_j = index_by_operand( info->graph,i,(QsOperand)finished,false );
-
-				bool is_zero = qs_coefficient_is_zero( qs_terminal_acquire( finished ) );
-				qs_terminal_release( finished );
-
-				if( is_zero ) {
-					DBG_PRINT_2( "  Operand confirmed zero and edge delete\n",info->rd );
-					qs_pivot_graph_delete_nth( info->graph,i,finished_j );
-				} else {
-					DBG_PRINT_2( "  Operand is a false zero, edge retained\n",info->rd );
-					fprintf( stderr,"Warning: Symbolic cancellation on edge of pivot %i\n",meta->order );
-				}
-
-				DBG_PRINT_2( " }\n",info->rd );
-			}
-		}
+		} else
+			qs_terminal_group_wait( waiter );
 
 		QsTerminal finished = qs_terminal_group_pop( waiter );
 
@@ -75,13 +53,31 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair ) {
 			qs_terminal_release( finished );
 
 			if( is_zero ) {
-				DBG_PRINT_2( " Found numerically zero and added for further symbolic consideration\n",info->rd );
+				DBG_PRINT_2( " Found numerically zero and registered for later check\n",info->rd );
 				qs_terminal_group_push( symbolic_waiter,qs_pivot_graph_terminate_nth( info->graph,i,finished_j,false ) );
 			} else {
 				next_i = qs_pivot_graph_head_nth( info->graph,i,finished_j );
 				next_meta = qs_pivot_graph_meta( info->graph,next_i );
 				DBG_PRINT_2( " Confirmed next elimination to pivot %i\n",info->rd,next_meta->order );
 			}
+		}
+	}
+	DBG_PRINT_2( "}\n",info->rd );
+
+	DBG_PRINT_2( "Attempting to delete symbolically evaluated zeroes {\n",info->rd );
+	QsTerminal finished;
+	while( finished = qs_terminal_group_pop( symbolic_waiter ) ) {
+		unsigned finished_j = index_by_operand( info->graph,i,(QsOperand)finished,false );
+
+		bool is_zero = qs_coefficient_is_zero( qs_terminal_acquire( finished ) );
+		qs_terminal_release( finished );
+
+		if( is_zero ) {
+			DBG_PRINT_2( " Operand confirmed zero and edge delete\n",info->rd );
+			qs_pivot_graph_delete_nth( info->graph,i,finished_j );
+		} else {
+			DBG_PRINT_2( " Operand is a false zero, edge retained\n",info->rd );
+			fprintf( stderr,"Warning: Symbolic cancellation on edge of pivot %i\n",meta->order );
 		}
 	}
 	DBG_PRINT_2( "}\n",info->rd );
