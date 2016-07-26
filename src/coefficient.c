@@ -25,6 +25,7 @@ struct QsEvaluator {
 	unsigned n_symbols;
 	char** symbols;
 	char** substitutions;
+	char* binary;
 
 	unsigned evaluations;
 	unsigned max_evaluations;
@@ -39,6 +40,7 @@ struct QsEvaluator {
 struct QsEvaluatorOptions {
 	unsigned cycle;
 	unsigned n_symbols;
+	char* binary;
 	char** symbols;
 	char** substitutions;
 };
@@ -47,6 +49,7 @@ QsEvaluatorOptions qs_evaluator_options_new( ) {
 	QsEvaluatorOptions result = malloc( sizeof (struct QsEvaluatorOptions) );
 	result->n_symbols = 0;
 	result->cycle = 0;
+	result->binary = NULL;
 	result->symbols = malloc( 0 );
 	result->substitutions = malloc( 0 );
 	return result;
@@ -59,6 +62,8 @@ void qs_evaluator_options_add( QsEvaluatorOptions o,const char* first, ... ) {
 
 	if( !strcmp( name,"#" ) ) {
 		o->cycle = va_arg( argp,unsigned );
+	} else if( !strcmp( name,"!" ) ) {
+		o->binary = strdup( va_arg( argp,char* ) );
 	} else {
 		const char* substitution = va_arg( argp,char* );
 
@@ -85,20 +90,13 @@ void qs_evaluator_options_destroy( QsEvaluatorOptions o ) {
 			free( o->substitutions[ j ] );
 	}
 
+	assert( o->binary );
+
 	free( o->symbols );
+	free( o->binary );
 	free( o->substitutions );
 	free( o );
 }
-
-#if 0
-static void assert_sensible( const char* const restrict text ) {
-	int j;
-	for( j = 0; j<strlen( text ); j++ ) {
-		char glyph = text[ j ];
-		assert( glyph=='(' || glyph==')' || glyph=='*' || glyph=='+' || glyph=='-' || glyph=='/' ||( glyph>='A' && glyph<='Z' )||( glyph>='a' && glyph<='z' )||( glyph>='0' && glyph<='9' )|| glyph=='^' );
-	}
-}
-#endif
 
 static ssize_t fermat_sync( QsEvaluator e,char** out ) {
 	fputs( ";!!('#')\n",e->out );
@@ -197,7 +195,7 @@ static void init_fermat( QsEvaluator e ) {
 		// Detach from PG to not receive signals
 		setpgid( 0,getpid( ) );
 
-		if( !execlp( FERMAT_BINARY,FERMAT_BINARY,NULL ) )
+		if( !execlp( e->binary,e->binary,NULL ) )
 			fprintf( stderr,"Could not spawn fermat instance!\n" );
 	}
 
@@ -239,6 +237,7 @@ QsEvaluator qs_evaluator_new( QsCompoundDiscoverer discover,QsEvaluatorOptions o
 	result->symbols = malloc( opts->n_symbols*sizeof (char*) );
 	result->substitutions = malloc( opts->n_symbols*sizeof (char*) );
 	result->n_symbols = opts->n_symbols;
+	result->binary = strdup( opts->binary );
 
 	int j;
 	for( j = 0; j<opts->n_symbols; j++ ) {
@@ -289,9 +288,6 @@ static void submit_compound( QsEvaluator e,QsCompound x,QsOperation op ) {
 		} else {
 			QsCoefficient child = (QsCoefficient)child_raw;
 			fermat_submit( e,child->text );
-#if 0
-			assert_sensible( child->text );
-#endif
 		}
 
 		if( parens )
@@ -341,6 +337,7 @@ void qs_evaluator_destroy( QsEvaluator e ) {
 	fclose( e->fermat_log );
 #endif
 
+	free( e->binary );
 	free( e->symbols );
 	free( e->substitutions );
 	free( e );

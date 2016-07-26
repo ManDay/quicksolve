@@ -22,8 +22,9 @@
 #define STR( X ) #X
 #define XSTR( X ) STR( X )
 
-const char const usage[ ]= "[-p <Threads>] [-k <Fermat cycle>] [-a <Identity limit>] [-m <Memory limit>] [-e <Elimination Mode>] [-t <Terminal Limit>] [-b <Backing DB>] [-q] [<Symbol><Assignment><Substitution>] ...]\n\n"
-	"<Threads>: Number of evaluators in parallel calculation [Default " XSTR( DEF_NUM_PROCESSORS ) "]\n"
+const char const usage[ ]= "[-p <Symbolic threads>] [-n <Numeric threads>] [-k <Fermat cycle>] [-a <Identity limit>] [-m <Memory limit>] [-e <Elimination Mode>] [-t <Terminal Limit>] [-b <Backing DB>] [-q] [<Symbol><Assignment><Substitution>] ...]\n\n"
+	"<Symbolic threads>: Number of evaluators in parallel calculation of symbolic expressions [Default " XSTR( DEF_NUM_PROCESSORS ) "]\n"
+	"<Numeric threads>: Number of evaluators in parallel calculation of numeric expressions [Default " XSTR( DEF_NUM_PROCESSORS ) "]\n"
 	"<Identity limit>: Upper bound on the number of identities in the system [Default " XSTR( DEF_PREALLOC ) "]\n"
 	"<Memory limit>: Memory limit in bytes above which coefficients are written to disk backing space or 0 for no limit [Default " XSTR( DEF_MEMLIMIT )"]\n"
 	"<Elimination Mode>: How to deal with numerical zeroes. Either of: discard them (o)ptimistacally, (w)ait for the symbolic result, or (k)eep them [Default k]\n"
@@ -48,6 +49,7 @@ void signalled( int signum ) {
 int main( const int argc,char* const argv[ ] ) {
 	// Parse arguments
 	int num_processors = DEF_NUM_PROCESSORS;
+	int num_processors_numeric = DEF_NUM_PROCESSORS;
 	unsigned prealloc = DEF_PREALLOC;
 	size_t memlimit = DEF_MEMLIMIT;
 	size_t limit_terminals = DEF_LIMITTERMINALS;
@@ -60,11 +62,15 @@ int main( const int argc,char* const argv[ ] ) {
 	FILE* const outfile = stdout;
 
 	int opt;
-	while( ( opt = getopt( argc,argv,"p:a:hqk:b:m:t:e:" ) )!=-1 ) {
+	while( ( opt = getopt( argc,argv,"p:a:hqk:b:m:t:e:n:" ) )!=-1 ) {
 		char* endptr;
 		switch( opt ) {
 		case 'p':
 			if( ( num_processors = strtol( optarg,&endptr,0 ) )<1 || *endptr!='\0' )
+				help = true;
+			break;
+		case 'n':
+			if( ( num_processors_numeric = strtol( optarg,&endptr,0 ) )<1 || *endptr!='\0' )
 				help = true;
 			break;
 		case 'a':
@@ -150,6 +156,8 @@ int main( const int argc,char* const argv[ ] ) {
 	}
 
 	qs_evaluator_options_add( fermat_options,"#",fercycle );
+	qs_evaluator_options_add( fermat_options,"!",FERMAT_BINARY );
+	qs_evaluator_options_add( fermat_options_numeric,"!",FERMAT_BINARY_NUMERIC );
 
 #if QS_STATUS
 	QsAEF aef = qs_aef_new( limit_terminals,false );
@@ -161,10 +169,11 @@ int main( const int argc,char* const argv[ ] ) {
 
 	info.graph = qs_pivot_graph_new_with_size( aef,aef_numeric,mgr,(QsLoadFunction)qs_integral_mgr_load_expression,mgr,(QsSaveFunction)qs_integral_mgr_save_expression,storage_db,memlimit,prealloc );
 
-	for( j = 0; j<num_processors; j++ ) {
+	for( j = 0; j<num_processors; j++ )
 		qs_aef_spawn( aef,fermat_options );
+
+	for( j = 0; j<num_processors_numeric; j++ )
 		qs_aef_spawn( aef_numeric,fermat_options_numeric );
-	}
 
 	qs_evaluator_options_destroy( fermat_options );
 	qs_evaluator_options_destroy( fermat_options_numeric );

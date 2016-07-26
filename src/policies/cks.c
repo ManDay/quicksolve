@@ -39,7 +39,7 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair ) {
 			struct QsMetadata* candidate_meta = qs_pivot_graph_meta( info->graph,candidate_i );
 
 			const bool suitable = candidate_i!=i && candidate_meta &&( ( candidate_meta->solved ||( candidate_meta->order<meta->order && candidate_meta->consideration==0 ) )||( despair &&( despair>=candidate_meta->consideration ) ) );
-			
+
 			if( candidate_meta )
 				DBG_PRINT_2( " Edge #%i to pivot %i (%i-fold considered, despair %i)\n",info->rd,j,candidate_meta->order,candidate_meta->consideration,despair );
 
@@ -62,7 +62,8 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair ) {
 			if( is_zero ) {
 				if( info->elimination==ELIMINATE_OPTIMISTIC ) {
 					DBG_PRINT_2( " Found numerically zero and optimistically removed\n",info->rd );
-					qs_pivot_graph_delete_nth( info->graph,i,finished_j );
+					qs_pivot_graph_delete_nth( info->graph,i,finished_j,j<qs_pivot_graph_n_refs( info->graph,i )?j-1:0 );
+					j--;
 				} else {
 					DBG_PRINT_2( " Found numerically zero and registered for later check\n",info->rd );
 					qs_terminal_group_push( symbolic_waiter,qs_pivot_graph_terminate_nth( info->graph,i,finished_j,false ) );
@@ -86,7 +87,7 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair ) {
 
 		if( is_zero ) {
 			DBG_PRINT_2( " Operand confirmed zero and edge delete\n",info->rd );
-			qs_pivot_graph_delete_nth( info->graph,i,finished_j );
+			qs_pivot_graph_delete_nth( info->graph,i,finished_j,0 );
 		} else {
 			DBG_PRINT_2( " Operand is a false zero, edge retained\n",info->rd );
 			fprintf( stderr,"Warning: Numeric cancellation on edge of pivot %i\n",meta->order );

@@ -439,16 +439,17 @@ QsOperand qs_pivot_graph_operand_nth( QsPivotGraph g,QsComponent tail,unsigned n
 	return numeric?g->components[ tail ]->refs[ n ].numeric:g->components[ tail ]->refs[ n ].coefficient;
 }
 
-void qs_pivot_graph_delete_nth( QsPivotGraph g,QsComponent tail,unsigned n ) {
+void qs_pivot_graph_delete_nth( QsPivotGraph g,QsComponent tail,unsigned index_target,unsigned index_replacement ) {
 	Pivot* target = g->components[ tail ];
 
-	target->refs[ n ].coefficient = (QsOperand)qs_operand_terminate( target->refs[ n ].coefficient,g->aef,g->memory.mgr,COEFFICIENT_META_NEW( g ) );
-	qs_operand_discard( (QsTerminal)target->refs[ n ].coefficient,true );
+	target->refs[ index_target ].coefficient = (QsOperand)qs_operand_terminate( target->refs[ index_target ].coefficient,g->aef,g->memory.mgr,COEFFICIENT_META_NEW( g ) );
 
-	qs_operand_unref( target->refs[ n ].numeric );
+	qs_operand_discard( (QsTerminal)target->refs[ index_target ].coefficient,true );
+	qs_operand_unref( target->refs[ index_target ].numeric );
 
 	target->n_refs--;
-	target->refs[ n ]= target->refs[ target->n_refs ];
+	target->refs[ index_target ]= target->refs[ index_replacement ];
+	target->refs[ index_replacement ]= target->refs[ target->n_refs ];
 	target->refs = realloc( target->refs,target->n_refs*sizeof (struct Reference) );
 }
 
