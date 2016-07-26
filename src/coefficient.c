@@ -197,7 +197,7 @@ static void init_fermat( QsEvaluator e ) {
 		// Detach from PG to not receive signals
 		setpgid( 0,getpid( ) );
 
-		if( !execlp( "fermat","fermat",NULL ) )
+		if( !execlp( FERMAT_BINARY,FERMAT_BINARY,NULL ) )
 			fprintf( stderr,"Could not spawn fermat instance!\n" );
 	}
 

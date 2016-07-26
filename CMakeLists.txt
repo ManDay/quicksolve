@@ -10,6 +10,7 @@ set( QS_BUILD_QUICKCHECK "ON" CACHE BOOL "Build Quickcheck" )
 set( QS_JEMALLOC "ON" CACHE BOOL "Link QuickLib against jemalloc allocator" )
 set( QS_STATUS "ON" CACHE BOOL "Generate status output" )
 set( QS_BUILD_TESTS "ON" CACHE BOOL "Build unit tests" )
+set( QS_FERMAT_BINARY "fermat" CACHE STRING "Name of FERMAT binary" FORCE )
 
 if( NOT "${QS_INTEGRAL_POWERTYPE}" IN_LIST QS_INTEGRAL_POWERTYPE_VALID )
 	set( QS_INTEGRAL_POWERTYPE "char" CACHE STRING "Type of Powers in Database ([char],int,long)" FORCE )
@@ -28,6 +29,7 @@ else( )
 endif( )
 
 add_definitions( "-D'DBG_LEVEL=${QS_DEBUG_LEVEL}'" )
+add_definitions( "-D'FERMAT_BINARY=\"${QS_FERMAT_BINARY}\"'" )
 add_definitions( "-DQS_INTEGRAL_POWERTYPE=${QS_INTEGRAL_POWERTYPE}" )
 
 if( "${QS_DEBUG_LEVEL}" LESS "1" )
