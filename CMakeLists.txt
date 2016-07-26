@@ -8,6 +8,7 @@ set( QS_BUILD_SSRENDERER "ON" CACHE BOOL "Build the subsampling renderer" )
 set( QS_BUILD_QUICKSOLVE "ON" CACHE BOOL "Build Quicksolve" )
 set( QS_BUILD_QUICKCHECK "ON" CACHE BOOL "Build Quickcheck" )
 set( QS_JEMALLOC "ON" CACHE BOOL "Link QuickLib against jemalloc allocator" )
+set( QS_STATUS "ON" CACHE BOOL "Generate status output" )
 set( QS_BUILD_TESTS "ON" CACHE BOOL "Build unit tests" )
 
 if( NOT "${QS_INTEGRAL_POWERTYPE}" IN_LIST QS_INTEGRAL_POWERTYPE_VALID )
@@ -51,6 +52,10 @@ if( "${QS_DEBUG_LEVEL}" LESS "3" )
 else( )
 	add_definitions( "-D'DBG_PRINT_3( ... )=DBG_PRINT( __VA_ARGS__ )'" )
 	add_definitions( "-D'DBG_APPEND_3( ... )=DBG_APPEND( __VA_ARGS__ )'" )
+endif( )
+
+if( QS_STATUS )
+	add_definitions( "-DQS_STATUS" )
 endif( )
 
 find_path( KYOTO_INCLUDE_DIR "kclangc.h" DOC "Directory of kclangc.h" )

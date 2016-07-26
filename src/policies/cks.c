@@ -1,8 +1,15 @@
 #include <unistd.h>
 
+enum Elimination {
+	ELIMINATE_WAIT,
+	ELIMINATE_OPTIMISTIC,
+	ELIMINATE_NONE
+};
+
 struct CKSInfo {
 	QsPivotGraph graph;
 	volatile sig_atomic_t terminate;
+	enum Elimination elimination;
 	unsigned rd;
 };
 
@@ -53,8 +60,13 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair ) {
 			qs_terminal_release( finished );
 
 			if( is_zero ) {
-				DBG_PRINT_2( " Found numerically zero and registered for later check\n",info->rd );
-				qs_terminal_group_push( symbolic_waiter,qs_pivot_graph_terminate_nth( info->graph,i,finished_j,false ) );
+				if( info->elimination==ELIMINATE_OPTIMISTIC ) {
+					DBG_PRINT_2( " Found numerically zero and optimistically removed\n",info->rd );
+					qs_pivot_graph_delete_nth( info->graph,i,finished_j );
+				} else {
+					DBG_PRINT_2( " Found numerically zero and registered for later check\n",info->rd );
+					qs_terminal_group_push( symbolic_waiter,qs_pivot_graph_terminate_nth( info->graph,i,finished_j,false ) );
+				}
 			} else {
 				next_i = qs_pivot_graph_head_nth( info->graph,i,finished_j );
 				next_meta = qs_pivot_graph_meta( info->graph,next_i );
@@ -66,7 +78,7 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair ) {
 
 	DBG_PRINT_2( "Attempting to delete symbolically evaluated zeroes {\n",info->rd );
 	QsTerminal finished;
-	while( finished = qs_terminal_group_pop( symbolic_waiter ) ) {
+	while(  qs_terminal_group_count( symbolic_waiter )&&( ( info->elimination==ELIMINATE_WAIT &&( qs_terminal_group_wait( symbolic_waiter ),true ),finished = qs_terminal_group_pop( symbolic_waiter ) ) ) ) {
 		unsigned finished_j = index_by_operand( info->graph,i,(QsOperand)finished,false );
 
 		bool is_zero = qs_coefficient_is_zero( qs_terminal_acquire( finished ) );
@@ -77,13 +89,21 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair ) {
 			qs_pivot_graph_delete_nth( info->graph,i,finished_j );
 		} else {
 			DBG_PRINT_2( " Operand is a false zero, edge retained\n",info->rd );
-			fprintf( stderr,"Warning: Symbolic cancellation on edge of pivot %i\n",meta->order );
+			fprintf( stderr,"Warning: Numeric cancellation on edge of pivot %i\n",meta->order );
 		}
 	}
+	if( qs_terminal_group_count( symbolic_waiter ) )
+		fprintf( stderr,"Warning: Unverified numeric zero remain in pivot %i\n",meta->order );
 	DBG_PRINT_2( "}\n",info->rd );
 
 	qs_terminal_group_destroy( waiter );
 	qs_terminal_group_destroy( symbolic_waiter );
+
+	/* If termination was requested, the solver possibly returned
+	 * without normalization and we may not attempt to relay the pivot
+	 */
+	if( info->terminate )
+		return;
 
 	/* A non-null coefficient was found ready in the info->waiter array */
 	if( next_meta ) {
@@ -99,12 +119,6 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair ) {
 		info->rd--;
 
 		DBG_PRINT( "}\n",info->rd );
-
-		/* If termination was requested, the solver possibly returned
-		 * without normalization and we may not attempt to relay the pivot
-		 */
-		if( info->terminate )
-			return;
 
 		/* Further desperate recursions may have touched and modified the
 		 * current target, in which case the current data is obsolete. */

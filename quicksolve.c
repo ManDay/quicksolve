@@ -22,10 +22,11 @@
 #define STR( X ) #X
 #define XSTR( X ) STR( X )
 
-const char const usage[ ]= "[-p <Threads>] [-k <Fermat cycle>] [-a <Identity limit>] [-m <Memory limit>] [-t <Terminal Limit>] [-b <Backing DB>] [-q] [<Symbol><Assignment><Substitution>] ...]\n\n"
+const char const usage[ ]= "[-p <Threads>] [-k <Fermat cycle>] [-a <Identity limit>] [-m <Memory limit>] [-e <Elimination Mode>] [-t <Terminal Limit>] [-b <Backing DB>] [-q] [<Symbol><Assignment><Substitution>] ...]\n\n"
 	"<Threads>: Number of evaluators in parallel calculation [Default " XSTR( DEF_NUM_PROCESSORS ) "]\n"
 	"<Identity limit>: Upper bound on the number of identities in the system [Default " XSTR( DEF_PREALLOC ) "]\n"
 	"<Memory limit>: Memory limit in bytes above which coefficients are written to disk backing space or 0 for no limit [Default " XSTR( DEF_MEMLIMIT )"]\n"
+	"<Elimination Mode>: How to deal with numerical zeroes. Either of: discard them (o)ptimistacally, (w)ait for the symbolic result, or (k)eep them [Default k]\n"
 	"<Terminal limit>: Limit of number of evaluated coefficients to accumulate in the symbolic tree of operations [Default " XSTR( DEF_LIMITTERMINALS )"]\n"
 	"<Backing DB>: Kyotocabinet formatted string indicating the disk backing space database [Default '" DEF_BACKING "']\n"
 	"<Symbol>: One of the symbols occurring in the databases. All symbols must be registered\n"
@@ -38,7 +39,7 @@ const char const usage[ ]= "[-p <Threads>] [-k <Fermat cycle>] [-a <Identity lim
 
 #include "src/policies/cks.c"
 
-struct CKSInfo info = { NULL,false };
+struct CKSInfo info = { NULL,false,ELIMINATE_NONE };
 
 void signalled( int signum ) {
 	info.terminate = true;
@@ -59,7 +60,7 @@ int main( const int argc,char* const argv[ ] ) {
 	FILE* const outfile = stdout;
 
 	int opt;
-	while( ( opt = getopt( argc,argv,"p:a:hqk:b:m:t:" ) )!=-1 ) {
+	while( ( opt = getopt( argc,argv,"p:a:hqk:b:m:t:e:" ) )!=-1 ) {
 		char* endptr;
 		switch( opt ) {
 		case 'p':
@@ -84,6 +85,12 @@ int main( const int argc,char* const argv[ ] ) {
 		case 't':
 			if( ( limit_terminals = strtol( optarg,&endptr,0 ) )<0 || *endptr!='\0' )
 				help = true;
+			break;
+		case 'e':
+			if( optarg[ 0 ]=='o' )
+				info.elimination = ELIMINATE_OPTIMISTIC;
+			else if( optarg[ 0 ]=='w' )
+				info.elimination = ELIMINATE_WAIT;
 			break;
 		case 'h':
 			help = true;
@@ -144,8 +151,13 @@ int main( const int argc,char* const argv[ ] ) {
 
 	qs_evaluator_options_add( fermat_options,"#",fercycle );
 
+#if QS_STATUS
+	QsAEF aef = qs_aef_new( limit_terminals,false );
+	QsAEF aef_numeric = qs_aef_new( 0,true );
+#else
 	QsAEF aef = qs_aef_new( limit_terminals );
 	QsAEF aef_numeric = qs_aef_new( 0 );
+#endif
 
 	info.graph = qs_pivot_graph_new_with_size( aef,aef_numeric,mgr,(QsLoadFunction)qs_integral_mgr_load_expression,mgr,(QsSaveFunction)qs_integral_mgr_save_expression,storage_db,memlimit,prealloc );
 

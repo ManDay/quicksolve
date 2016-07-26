@@ -4,6 +4,22 @@
 #include "coefficient.h"
 #include "db.h"
 
+#define QS_OPERAND_ALLOW_DISCARD
+
+#if QS_STATUS
+#include <pthread.h>
+#include <stdatomic.h>
+struct QsStatus {
+	pthread_spinlock_t lock;
+	atomic_uint num_eval;
+	atomic_uint sym_eval;
+	atomic_uint n_terminals;
+	atomic_uint n_independent;
+	_Atomic size_t memusage;
+	atomic_uint queue_size;
+};
+#endif
+
 typedef struct QsOperand* QsOperand;
 typedef struct QsIntermediate* QsIntermediate;
 typedef struct QsAEF* QsAEF;
@@ -74,7 +90,11 @@ typedef void(* QsTerminalDiscarder)( QsTerminalMeta,void* );
  */
 typedef void(* QsTerminalMemoryCallback)( size_t,bool,void* );
 
+#if QS_STATUS
+QsAEF qs_aef_new( size_t,bool );
+#else
 QsAEF qs_aef_new( size_t );
+#endif
 bool qs_aef_spawn( QsAEF,QsEvaluatorOptions );
 void qs_aef_destroy( QsAEF );
 
@@ -106,5 +126,9 @@ bool qs_terminal_acquired( QsTerminal );
 void qs_terminal_load( QsTerminal,QsCoefficient );
 QsCoefficient qs_terminal_acquire( QsTerminal );
 void qs_terminal_release( QsTerminal );
+
+#ifdef QS_OPERAND_ALLOW_DISCARD
+void qs_operand_discard( QsTerminal,bool );
+#endif
 
 #endif

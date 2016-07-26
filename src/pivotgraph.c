@@ -14,6 +14,10 @@
 #define COEFFICIENT_UID_MAX_HIGH ( ( (CoefficientUID)(-1) ) )
 #define COEFFICIENT_META_NEW( g ) ( &(struct CoefficientMeta){ generate_id( g ),false } )
 
+#if QS_STATUS
+extern struct QsStatus status;
+#endif
+
 typedef unsigned long CoefficientUID;
 
 struct CoefficientMeta {
@@ -115,6 +119,10 @@ static void memory_change( size_t bytes,bool less,QsPivotGraph g ) {
 					break;
 				}
 	}
+
+#if QS_STATUS
+	atomic_store_explicit( &status.memusage,atomic_load_explicit( &g->memory.usage,memory_order_relaxed ),memory_order_relaxed );
+#endif
 }
 
 static void initial_terminal_loader( QsTerminal t,struct CoefficientId* id,QsPivotGraph g ) {
@@ -337,7 +345,13 @@ bool qs_pivot_graph_relay( QsPivotGraph g,QsComponent tail,QsComponent head ) {
 
 			tail_pivot->n_refs += head_pivot->n_refs - 2;
 
-			qs_operand_unref( base );
+			if( head_pivot->n_refs>1 )
+				qs_operand_unref( base );
+			else {
+				QsTerminal base_t = qs_operand_terminate( base,g->aef,g->memory.mgr,COEFFICIENT_META_NEW( g ) );
+				qs_operand_discard( base_t,false );
+			}
+
 			qs_operand_unref( base_numeric );
 
 			return true;
@@ -428,7 +442,9 @@ QsOperand qs_pivot_graph_operand_nth( QsPivotGraph g,QsComponent tail,unsigned n
 void qs_pivot_graph_delete_nth( QsPivotGraph g,QsComponent tail,unsigned n ) {
 	Pivot* target = g->components[ tail ];
 
-	qs_operand_unref( target->refs[ n ].coefficient );
+	target->refs[ n ].coefficient = (QsOperand)qs_operand_terminate( target->refs[ n ].coefficient,g->aef,g->memory.mgr,COEFFICIENT_META_NEW( g ) );
+	qs_operand_discard( (QsTerminal)target->refs[ n ].coefficient,true );
+
 	qs_operand_unref( target->refs[ n ].numeric );
 
 	target->n_refs--;

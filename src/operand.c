@@ -22,7 +22,25 @@
 #	define OP2STR( op ) ( (op)==QS_OPERATION_ADD?"ADD":(op)==QS_OPERATION_MUL?"MUL":(op)==QS_OPERATION_SUB?"SUB":(op)==QS_OPERATION_DIV?"DIV":"" )
 #endif
 
-#define QS_OPERAND_ALLOW_DISCARD
+#if QS_STATUS
+struct QsStatus status = {
+	1,
+	ATOMIC_VAR_INIT( 0 ),
+	ATOMIC_VAR_INIT( 0 ),
+	ATOMIC_VAR_INIT( 0 ),
+	ATOMIC_VAR_INIT( 0 ),
+	ATOMIC_VAR_INIT( 0 ),
+	ATOMIC_VAR_INIT( 0 )
+};
+#endif
+
+#ifdef QS_OPERAND_ALLOW_DISCARD
+enum Discard {
+	DISCARD_NONE = 0,
+	DISCARD_ZERO = 1,
+	DISCARD_ANY = 2
+};
+#endif
 
 typedef struct Expression* Expression;
 typedef struct BakedExpression* BakedExpression;
@@ -90,6 +108,7 @@ struct TerminalDataLink {
 struct TerminalData {
 	struct TerminalDataLink link;
 
+	pthread_spinlock_t lock;
 	unsigned refcount;
 	QsCoefficient coefficient;
 };
@@ -112,6 +131,10 @@ struct QsTerminal {
 
 	pthread_rwlock_t lock; ///< Locks is_result and construction of expression
 	bool is_result;
+
+#ifdef QS_OPERAND_ALLOW_DISCARD
+	enum Discard discarded;
+#endif
 
 	union {
 		BakedExpression expression; ///< A Pointer so that the QsTerminal can be destroyed
@@ -184,6 +207,10 @@ struct QsAEF {
 	struct Worker* workers;
 
 	bool termination_notice;
+
+#if QS_STATUS
+	bool is_numeric;
+#endif
 };
 
 static QsCompound qs_operand_discoverer( Expression,unsigned,bool*,QsOperation* );
@@ -192,6 +219,7 @@ static void aef_push_independent( QsAEF,QsTerminal );
 static QsTerminal aef_pop_independent( QsAEF );
 static void terminal_decrease_adc( QsTerminal,pthread_spinlock_t*,unsigned,unsigned );
 static void expression_clean( Expression );
+static void discard_unref( QsTerminal,bool );
 
 QsTerminalQueue qs_terminal_queue_new( ) {
 	QsTerminalQueue result = malloc( sizeof (struct QsTerminalQueue) );
@@ -229,21 +257,42 @@ static void qs_terminal_queue_add( QsTerminalQueue q,QsTerminal t ) {
 	if( q->data )
 		QS_TERMINAL_LINK( q->data ).before = t;
 
-	QS_TERMINAL_LINK( t ).before = NULL;
+	QS_TERMINAL_LINK( t ).before = t;
 	QS_TERMINAL_LINK( t ).after = q->data;
 	q->data = t;
+
+#if QS_STATUS
+	atomic_fetch_add_explicit( &status.queue_size,1,memory_order_relaxed );
+#endif
 }
 
 static void qs_terminal_queue_del( QsTerminalQueue q,QsTerminal t ) {
-	if( QS_TERMINAL_LINK( t ).before )
-		QS_TERMINAL_LINK( QS_TERMINAL_LINK( t ).before ).after = QS_TERMINAL_LINK( t ).after;
-	else
-		q->data = QS_TERMINAL_LINK( t ).after;
+	if( QS_TERMINAL_LINK( t ).before ) {
+		if( QS_TERMINAL_LINK( t ).before==t ) {
+			assert( q->data==t );
+			q->data = QS_TERMINAL_LINK( t ).after;
+		} else {
+			assert( q->data!=t );
+			QS_TERMINAL_LINK( QS_TERMINAL_LINK( t ).before ).after = QS_TERMINAL_LINK( t ).after;
+		}
 
-	if( QS_TERMINAL_LINK( t ).after )
-		QS_TERMINAL_LINK( QS_TERMINAL_LINK( t ).after ).before = QS_TERMINAL_LINK( t ).before;
+		if( QS_TERMINAL_LINK( t ).after )
+			if( QS_TERMINAL_LINK( t ).before==t )
+				QS_TERMINAL_LINK( QS_TERMINAL_LINK( t ).after ).before = QS_TERMINAL_LINK( t ).after;
+			else
+				QS_TERMINAL_LINK( QS_TERMINAL_LINK( t ).after ).before = QS_TERMINAL_LINK( t ).before;
 
-	QS_TERMINAL_LINK( t ).after = QS_TERMINAL_LINK( t ).before = NULL;
+#if QS_STATUS
+		if( QS_TERMINAL_LINK( t ).after || QS_TERMINAL_LINK( t ).before )
+			atomic_fetch_sub_explicit( &status.queue_size,1,memory_order_relaxed );
+#endif
+
+		QS_TERMINAL_LINK( t ).after = QS_TERMINAL_LINK( t ).before = NULL;
+	}
+}
+
+static bool qs_terminal_queued( QsTerminal t ) {
+	return QS_TERMINAL_LINK( t ).before;
 }
 
 void qs_terminal_mgr_destroy( QsTerminalMgr m ) {
@@ -252,42 +301,53 @@ void qs_terminal_mgr_destroy( QsTerminalMgr m ) {
 
 bool qs_terminal_queue_pop( QsTerminalQueue q ) {
 	QsCoefficient popped = NULL;
-	QsTerminal target = NULL;
-	ADCValue max_dvalue;
+	QsTerminal target;
 
-	pthread_mutex_lock( &q->lock );
+	do {
+		ADCValue max_dvalue;
+		target = NULL;
 
-	QsTerminal current = q->data;
-	while( current && !( target && max_dvalue==0 ) ) {
-		ADCValue dvalue = current->dvalue.value;
+		pthread_mutex_lock( &q->lock );
 
-		if( !target || dvalue==0 || dvalue>max_dvalue ) {
-			target = current;
-			max_dvalue = dvalue;
+		QsTerminal current = q->data;
+		while( current && !( target && max_dvalue==0 ) ) {
+			ADCValue dvalue = current->dvalue.value;
+
+			if( !target || dvalue==0 || dvalue>max_dvalue ) {
+				target = current;
+				max_dvalue = dvalue;
+			}
+
+			current = QS_TERMINAL_LINK( current ).after;
 		}
 
-		current = QS_TERMINAL_LINK( current ).after;
-	}
+		if( target ) {
+			pthread_spin_lock( &target->result->lock );
 
-	if( target ) {
-		qs_terminal_queue_del( q,target );
+			qs_terminal_queue_del( q,target );
 
-/* No need to lock here with anything besides the queue's mutex. The
- * only concurrent accesses to the coefficient are gated by aquiring it,
- * which in turn uses the mutex in the same, generalizing manner. */
-		assert( target->result->refcount==0 );
-		popped = target->result->coefficient;
-		target->result->coefficient = NULL;
+			if( target->result->refcount==0 ) {
+				popped = target->result->coefficient;
+				target->result->coefficient = NULL;
 
-		size_t change = qs_coefficient_size( popped );
-		if( target->manager->saver )
-			target->manager->saver( popped,target->id,target->manager->upointer );
-		else
-			qs_coefficient_destroy( popped );
-		target->manager->memory_callback( change,true,target->manager->upointer );
-	}
+				size_t change = qs_coefficient_size( popped );
+				if( target->manager->saver )
+					target->manager->saver( popped,target->id,target->manager->upointer );
+				else
+					qs_coefficient_destroy( popped );
 
-	pthread_mutex_unlock( &q->lock );
+/* We may only unlock the coefficient after we have written the result
+ * to database, otherwise no coefficient or worse, the wrong coefficient
+ * may be read. */
+				pthread_spin_unlock( &target->result->lock );
+
+				target->manager->memory_callback( change,true,target->manager->upointer );
+			} else
+				pthread_spin_unlock( &target->result->lock );
+		}
+
+		pthread_mutex_unlock( &q->lock );
+	} while( !popped && target );
 
 	return popped;
 }
@@ -300,7 +360,7 @@ void qs_terminal_load( QsTerminal t,QsCoefficient c ) {
 	result->coefficient = c;
 
 	if( t->manager ) {
-		if( t->id && result->refcount==0 ) {
+		if( t->id && result->refcount==0 && !qs_terminal_queued( t ) ) {
 /* External locking should and must assure that only one of
  * qs_terminal_load and qs_terminal_aquired is ran at the same time. All
  * other accesses are then concurrent reads gated by qs_terminal_aquired
@@ -315,7 +375,11 @@ void qs_terminal_load( QsTerminal t,QsCoefficient c ) {
 }
 
 bool qs_terminal_acquired( QsTerminal t ) {
-	return t->result->coefficient;
+	pthread_spin_lock( &t->result->lock );
+	bool result = t->result->coefficient;
+	pthread_spin_unlock( &t->result->lock );
+
+	return result;
 }
 
 QsCoefficient qs_terminal_acquire( QsTerminal t ) {
@@ -331,10 +395,9 @@ QsCoefficient qs_terminal_acquire( QsTerminal t ) {
  * refcount must happen under the same lock. Therefore, the only two
  * accesses to the refcount happen under the mutex of the queue and we
  * don't need additional locks. */
-		pthread_mutex_lock( &t->manager->queue->lock );
-		qs_terminal_queue_del( t->manager->queue,t );
+		pthread_spin_lock( &result->lock );
 		result->refcount++;
-		pthread_mutex_unlock( &t->manager->queue->lock );
+		pthread_spin_unlock( &result->lock );
 
 		t->manager->loader( t,t->id,t->manager->upointer );
 	}
@@ -346,12 +409,18 @@ void qs_terminal_release( QsTerminal t ) {
 	if( t->manager && t->id ) {
 		TerminalData result = t->result;
 
-		pthread_mutex_lock( &t->manager->queue->lock );
+		pthread_spin_lock( &result->lock );
+
 		assert( result->refcount>0 );
+
 		result->refcount--;
-		if( t->id && result->refcount==0 )
+		if( result->refcount==0 && !qs_terminal_queued( t ) ) {
+			pthread_mutex_lock( &t->manager->queue->lock );
 			qs_terminal_queue_add( t->manager->queue,t );
-		pthread_mutex_unlock( &t->manager->queue->lock );
+			pthread_mutex_unlock( &t->manager->queue->lock );
+		}
+
+		pthread_spin_unlock( &result->lock );
 	}
 }
 
@@ -375,8 +444,14 @@ bool qs_aef_spawn( QsAEF a,QsEvaluatorOptions opts ) {
 	return result;
 }
 
-QsAEF qs_aef_new( size_t limit_terminals  ) {
+#if QS_STATUS
+QsAEF qs_aef_new( size_t limit_terminals,bool is_numeric  )
+#else
+QsAEF qs_aef_new( size_t limit_terminals  )
+#endif
+{
 	QsAEF result = malloc( sizeof (struct QsAEF) );
+
 
 	result->n_independent = 0;
 	result->independent = malloc( 0 );
@@ -392,6 +467,10 @@ QsAEF qs_aef_new( size_t limit_terminals  ) {
 
 	result->workers = malloc( 0 );
 	result->termination_notice = false;
+
+#if QS_STATUS
+	result->is_numeric = is_numeric;
+#endif
 
 	return result;
 }
@@ -455,10 +534,15 @@ QsTerminal qs_operand_new( QsTerminalMgr m,QsTerminalMeta id ) {
 	result->dvalue.value = 0;
 	result->dvalue.current_removal = NULL;
 
+#ifdef QS_OPERAND_ALLOW_DISCARD
+	result->discarded = DISCARD_NONE;
+#endif
+
 	atomic_thread_fence( memory_order_acq_rel );
 
 	result->result = malloc( sizeof (struct TerminalData) );
 
+	pthread_spin_init( &result->result->lock,PTHREAD_PROCESS_PRIVATE );
 	result->result->link = (struct TerminalDataLink){ NULL,NULL };
 	result->result->refcount = 0;
 	result->result->coefficient = NULL;
@@ -495,6 +579,37 @@ static void manage_tails( struct Expression e,const bool require ) {
 	}
 }
 
+static ADCValue recollect_dvalue( QsTerminal dependee,QsTerminal removal ) {
+	int j = 0;
+
+	ADCValue new_dvalue = 0;
+
+	pthread_spin_lock( &dependee->dependers_lock );
+	while( dependee->dvalue.current_removal==removal && j<dependee->dependers.n_operands ) {
+		pthread_spin_unlock( &dependee->dvalue.lock );
+
+		if( dependee->dependers.operands[ j ]!=NO_DEPENDER ) {
+			assert( !dependee->dependers.operands[ j ]->is_result );
+			BakedExpression target = dependee->dependers.operands[ j ]->expression;
+
+			ADC adc = atomic_load_explicit( &target->adc.adc,memory_order_relaxed );
+
+			if( !adc.overflow &&( new_dvalue==0 ||( adc.value + 1 )<new_dvalue ) )
+				new_dvalue = adc.value + 1;
+		}
+
+		pthread_spin_unlock( &dependee->dependers_lock );
+
+		j++;
+
+		pthread_spin_lock( &dependee->dvalue.lock );
+		pthread_spin_lock( &dependee->dependers_lock );
+	}
+	pthread_spin_unlock( &dependee->dependers_lock );
+
+	return new_dvalue;
+}
+
 /** Remove a depender
  *
  * Removing a depender sets the according entry in dependers to NULL.
@@ -516,43 +631,20 @@ static void remove_depender( QsTerminal dependee,QsTerminal depender ) {
 
 	pthread_spin_unlock( &dependee->dependers_lock );
 	
-	ADCValue minimal_adc = 0;
 
 	pthread_spin_lock( &dependee->dvalue.lock );
 	dependee->dvalue.current_removal = depender;
 	dependee->dvalue.value_on_hold = 0;
 	pthread_spin_unlock( &dependee->dvalue.lock );
 
-	j = 0;
-
 	pthread_spin_lock( &dependee->dvalue.lock );
-	pthread_spin_lock( &dependee->dependers_lock );
-	while( dependee->dvalue.current_removal==depender && j<dependee->dependers.n_operands ) {
-		pthread_spin_unlock( &dependee->dvalue.lock );
 
-		if( dependee->dependers.operands[ j ]!=NO_DEPENDER ) {
-			assert( !dependee->dependers.operands[ j ]->is_result );
-			BakedExpression target = dependee->dependers.operands[ j ]->expression;
+	ADCValue new_dvalue = recollect_dvalue( dependee,depender );
 
-			ADC adc = atomic_load_explicit( &target->adc.adc,memory_order_relaxed );
-
-			if( minimal_adc==0 || adc.value<minimal_adc )
-				minimal_adc = adc.value;
-		}
-
-		pthread_spin_unlock( &dependee->dependers_lock );
-
-		j++;
-
-		pthread_spin_lock( &dependee->dvalue.lock );
-		pthread_spin_lock( &dependee->dependers_lock );
-	}
-	pthread_spin_unlock( &dependee->dependers_lock );
-
-	if( dependee->dvalue.value_on_hold<minimal_adc )
+	if( dependee->dvalue.value_on_hold!=0 && dependee->dvalue.value_on_hold<new_dvalue )
 		dependee->dvalue.value = dependee->dvalue.value_on_hold;
 	else
-		dependee->dvalue.value = minimal_adc + 1;
+		dependee->dvalue.value = new_dvalue;
 
 	pthread_spin_unlock( &dependee->dvalue.lock );
 }
@@ -568,6 +660,18 @@ static void terminal_independ( QsTerminal target ) {
 		aef_push_independent( target->expression->queue,target );
 	}
 }
+
+#ifdef QS_OPERAND_ALLOW_DISCARD
+static void discard_unref( QsTerminal t,bool zero ) {
+	QsCoefficient result = qs_terminal_acquire( t );
+	if( zero && !qs_coefficient_is_zero( result ) ) {
+		fprintf( stderr,"Error: Discarded operand does not evaluate to zero\n" );
+		abort( );
+	}
+	qs_terminal_release( t );
+	qs_operand_unref( (QsOperand)t );
+}
+#endif
 
 static void* worker( void* udata ) {
 	QsAEF self = (QsAEF)udata;
@@ -607,6 +711,20 @@ static void* worker( void* udata ) {
 			qs_evaluator_evaluate( ev,src,src->expression.operation );
 			manage_tails( src->expression,false );
 
+			for( j = 0; j<target->expression->expression.n_operands; j++ ) {
+				QsOperand next_raw = target->expression->expression.operands[ j ];
+					
+					if( next_raw->is_terminal )
+						remove_depender( (QsTerminal)next_raw,target );
+					else {
+						QsIntermediate next = (QsIntermediate)next_raw;
+
+						int k;
+						for( k = 0; k<next->cache_tails->n_operands; k++ )
+							remove_depender( next->cache_tails->operands[ k ],target );
+					}
+				}
+
 			terminal_decrease_adc( target,NULL,1,0 );
 
 			TerminalData td = malloc( sizeof (struct TerminalData) );
@@ -619,6 +737,7 @@ static void* worker( void* udata ) {
 
 			pthread_rwlock_wrlock( &target->lock );
 
+			pthread_spin_init( &td->lock,PTHREAD_PROCESS_PRIVATE );
 			target->is_result = true;
 			target->result = td;
 
@@ -651,7 +770,8 @@ static void* worker( void* udata ) {
 			pthread_rwlock_unlock( &target->lock );
 
 #ifdef QS_OPERAND_ALLOW_DISCARD
-			qs_operand_unref( (QsOperand)target );
+			if( target->discarded )
+				discard_unref( target,target->discarded==DISCARD_ZERO );
 #endif
 
 			QsTerminalGroup waiter = src->waiter;
@@ -681,6 +801,13 @@ static void* worker( void* udata ) {
 				}
 			}
 
+#if QS_STATUS
+			if( self->is_numeric )
+				atomic_fetch_add_explicit( &status.num_eval,1,memory_order_relaxed );
+			else
+				atomic_fetch_add_explicit( &status.sym_eval,1,memory_order_relaxed );
+#endif
+
 			int j;
 			for( j = 0; j<n_dependers; j++ ) {
 				pthread_spin_lock( &target->dependers_lock );
@@ -694,12 +821,34 @@ static void* worker( void* udata ) {
 			free( src->adc.contributions );
 			free( src );
 
+#if QS_STATUS
+			pthread_spin_lock( &status.lock );
+
+			unsigned num_eval = atomic_load_explicit( &status.num_eval,memory_order_relaxed );
+			unsigned sym_eval = atomic_load_explicit( &status.sym_eval,memory_order_relaxed );
+			unsigned n_terminals = atomic_load_explicit( &status.n_terminals,memory_order_relaxed );
+			unsigned n_independent = atomic_load_explicit( &status.n_independent,memory_order_relaxed );
+			size_t memusage = atomic_load_explicit( &status.memusage,memory_order_relaxed );
+			unsigned queue_size = atomic_load_explicit( &status.queue_size,memory_order_relaxed );
+			printf( "Numeric evaluations: %i\nSymbolic evaluations: %i\nSymbolic tree depth: %i\nSymbolic parallelism: %i\nSymbolic memory usage: %zu\nCached QsTerminals: %i\n",num_eval,sym_eval,n_terminals,n_independent,memusage,queue_size );
+
+			pthread_spin_unlock( &status.lock );
+#endif
+
+#if !QS_STATUS
 			if( self->limit_terminals ) {
+#endif
 				pthread_mutex_lock( &self->n_terminals_lock );
 				self->n_terminals--;
+#if QS_STATUS
+				if( !self->is_numeric )
+					atomic_store_explicit( &status.n_terminals,self->n_terminals,memory_order_relaxed );
+#endif
 				pthread_cond_signal( &self->n_terminals_change );
 				pthread_mutex_unlock( &self->n_terminals_lock );
+#if !QS_STATUS
 			}
+#endif
 		}
 
 		pthread_mutex_lock( &self->operation_lock );
@@ -713,13 +862,17 @@ static void* worker( void* udata ) {
 }
 
 static void aef_count_terminal( QsAEF a,QsTerminal t ) {
+#if !QS_STATUS
 	if( a->limit_terminals ) {
+#endif
 		pthread_mutex_lock( &a->n_terminals_lock );
-		while( a->n_terminals>=a->limit_terminals )
+		while( a->limit_terminals && a->n_terminals>=a->limit_terminals )
 			pthread_cond_wait( &a->n_terminals_change,&a->n_terminals_lock );
 		a->n_terminals++;
 		pthread_mutex_unlock( &a->n_terminals_lock );
+#if !QS_STATUS
 	}
+#endif
 }
 
 struct TerminalList* terminal_list_new( ) {
@@ -793,8 +946,8 @@ static void update_dvalue( QsTerminal target,ADCValue adc ) {
 	if( dvalue<=target->dvalue.value || target->dvalue.value==0 )
 		target->dvalue.value = dvalue;
 
-	if( target->dvalue.current_removal &&( dvalue<=target->dvalue.value_on_hold || target->dvalue.value_on_hold==0 ) )
-		target->dvalue.value = dvalue;
+	if( dvalue<=target->dvalue.value_on_hold || target->dvalue.value_on_hold==0 )
+		target->dvalue.value_on_hold = dvalue;
 
 	pthread_spin_unlock( &target->dvalue.lock );
 }
@@ -810,6 +963,7 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsOperation op,QsA
 	result->dependers.operands = malloc( 0 );
 	result->manager = m;
 	result->dvalue.value = 0;
+	result->dvalue.value_on_hold = 123;
 	result->dvalue.current_removal = NULL;
 
 	if( m ) {
@@ -823,10 +977,10 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsOperation op,QsA
 
 	atomic_init( &b->adc.adc,( (ADC){ false,1 } ) );
 	atomic_init( &b->dc,1 );
-#ifdef QS_OPERAND_ALLOW_DISCARD
-	atomic_init( &result->operand.refcount,2 );
-#else
 	atomic_init( &result->operand.refcount,1 );
+
+#ifdef QS_OPERAND_ALLOW_DISCARD
+	result->discarded = DISCARD_NONE;
 #endif
 
 	pthread_rwlock_init( &result->lock,NULL );
@@ -894,9 +1048,8 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsOperation op,QsA
 
 	pthread_rwlock_unlock( &result->lock );
 
+	terminal_decrease_adc( result,NULL,0,0 );
 	terminal_independ( result );
-
-	// TODO: Update D-Values
 
 	return result;
 }
@@ -974,6 +1127,19 @@ static void expression_clean( Expression e ) {
 
 	free( e->operands );
 }
+
+#ifdef QS_OPERAND_ALLOW_DISCARD
+void qs_operand_discard( QsTerminal t,bool zero ) {
+	pthread_rwlock_rdlock( &t->lock );
+	if( t->is_result ) {
+		pthread_rwlock_unlock( &t->lock );
+		discard_unref( t,zero );
+	} else {
+		t->discarded = zero?DISCARD_ZERO:DISCARD_ANY;
+		pthread_rwlock_unlock( &t->lock );
+	}
+}
+#endif
 
 void qs_operand_unref( QsOperand o ) {
 	if( atomic_fetch_sub_explicit( &o->refcount,1,memory_order_acq_rel )==1 ) {
@@ -1112,9 +1278,6 @@ static void terminal_decrease_adc( QsTerminal t,pthread_spinlock_t* parent_lock,
 
 	ADC adc = atomic_load_explicit( &adcd->adc,memory_order_relaxed );
 
-	if( decrement==0 )
-		assert( adc.overflow );
-
 	if( adc.overflow ) {
 		if( parent_lock )
 			pthread_spin_unlock( parent_lock );
@@ -1212,22 +1375,6 @@ static void terminal_decrease_adc( QsTerminal t,pthread_spinlock_t* parent_lock,
 }
 
 static void aef_push_independent( QsAEF a,QsTerminal o ) {
-	// TODO: Remove depender only later, when evaluated.
-	int j;
-	for( j = 0; j<o->expression->expression.n_operands; j++ ) {
-		QsOperand next_raw = o->expression->expression.operands[ j ];
-		
-		if( next_raw->is_terminal )
-			remove_depender( (QsTerminal)next_raw,o );
-		else {
-			QsIntermediate next = (QsIntermediate)next_raw;
-
-			int k;
-			for( k = 0; k<next->cache_tails->n_operands; k++ )
-				remove_depender( next->cache_tails->operands[ k ],o );
-		}
-	}
-
 	// TODO: A more efficient storage, e.g. DLL
 	pthread_mutex_lock( &a->operation_lock );
 
@@ -1235,6 +1382,11 @@ static void aef_push_independent( QsAEF a,QsTerminal o ) {
 	a->independent[ a->n_independent ]= o;
 	a->n_independent++;
 	pthread_cond_signal( &a->operation_change );
+
+#if QS_STATUS
+	if( !a->is_numeric )
+		atomic_store_explicit( &status.n_independent,a->n_independent,memory_order_relaxed );
+#endif
 
 	pthread_mutex_unlock( &a->operation_lock );
 }
@@ -1251,6 +1403,11 @@ static QsTerminal aef_pop_independent( QsAEF a ) {
 		free( a->independent );
 		a->independent = new_stack;
 		a->n_independent--;
+
+#if QS_STATUS
+		if( !a->is_numeric )
+			atomic_store_explicit( &status.n_independent,a->n_independent,memory_order_relaxed );
+#endif
 	}
 
 	return result;
