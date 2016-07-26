@@ -100,9 +100,6 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair ) {
 	qs_terminal_group_destroy( waiter );
 	qs_terminal_group_destroy( symbolic_waiter );
 
-	/* If termination was requested, the solver possibly returned
-	 * without normalization and we may not attempt to relay the pivot
-	 */
 	if( info->terminate )
 		return;
 
@@ -120,6 +117,12 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair ) {
 		info->rd--;
 
 		DBG_PRINT( "}\n",info->rd );
+
+		/* If termination was requested, the solver possibly returned
+		 * without normalization and we may not attempt to relay the pivot
+		 */
+		if( info->terminate )
+			return;
 
 		/* Further desperate recursions may have touched and modified the
 		 * current target, in which case the current data is obsolete. */
