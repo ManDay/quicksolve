@@ -673,6 +673,23 @@ static void discard_unref( QsTerminal t,bool zero ) {
 }
 #endif
 
+static void terminal_remove_dependencies( QsTerminal target ) {
+	int j;
+	for( j = 0; j<target->expression->expression.n_operands; j++ ) {
+		QsOperand next_raw = target->expression->expression.operands[ j ];
+			
+			if( next_raw->is_terminal )
+				remove_depender( (QsTerminal)next_raw,target );
+			else {
+				QsIntermediate next = (QsIntermediate)next_raw;
+
+				int k;
+				for( k = 0; k<next->cache_tails->n_operands; k++ )
+					remove_depender( next->cache_tails->operands[ k ],target );
+			}
+		}
+}
+
 static void* worker( void* udata ) {
 	QsAEF self = (QsAEF)udata;
 	pthread_t self_thread = pthread_self( );
@@ -707,31 +724,30 @@ static void* worker( void* udata ) {
 
 			BakedExpression src = target->expression;
 
-			manage_tails( src->expression,true );
-			qs_evaluator_evaluate( ev,src,src->expression.operation );
-			manage_tails( src->expression,false );
+			bool first_pass = true;
 
-			for( j = 0; j<target->expression->expression.n_operands; j++ ) {
-				QsOperand next_raw = target->expression->expression.operands[ j ];
-					
-					if( next_raw->is_terminal )
-						remove_depender( (QsTerminal)next_raw,target );
-					else {
-						QsIntermediate next = (QsIntermediate)next_raw;
-
-						int k;
-						for( k = 0; k<next->cache_tails->n_operands; k++ )
-							remove_depender( next->cache_tails->operands[ k ],target );
-					}
-				}
-
-			terminal_decrease_adc( target,NULL,1,0 );
-
+			QsCoefficient result;
 			TerminalData td = malloc( sizeof (struct TerminalData) );
 			td->link = (struct TerminalDataLink){ NULL,NULL };
 			td->refcount = 0;
 
-			QsCoefficient result = qs_evaluator_receive( ev );
+			do {
+				manage_tails( src->expression,true );
+				qs_evaluator_evaluate( ev,src,src->expression.operation );
+				manage_tails( src->expression,false );
+
+				if( first_pass ) {
+					terminal_remove_dependencies( target );
+					terminal_decrease_adc( target,NULL,1,0 );
+				}
+
+				result = qs_evaluator_receive( ev );
+
+				if( !result )
+					fprintf( stderr,"Warning: Evaluation lost and is resubmitted\n" );
+
+				first_pass = false;
+			} while( !result );
 
 			td->coefficient = result;
 

@@ -117,6 +117,9 @@ int main( const int argc,char* const argv[ ] ) {
 	// Reap fermat processes immediately
 	sigaction( SIGCHLD,&(struct sigaction){ .sa_handler = SIG_IGN,.sa_flags = SA_NOCLDWAIT },NULL );
 
+	// Ignore broken pipe to Fermat, we detect this by premature EOF
+	sigaction( SIGPIPE,&(struct sigaction){ .sa_handler = SIG_IGN },NULL );
+
 	// Handle request for termination
 	sigaction( SIGINT,&(struct sigaction){ .sa_handler = signalled },NULL );
 

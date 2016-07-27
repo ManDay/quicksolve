@@ -45,6 +45,9 @@ struct QsEvaluatorOptions {
 	char** substitutions;
 };
 
+static void init_fermat( QsEvaluator );
+static void finish_fermat( QsEvaluator );
+
 QsEvaluatorOptions qs_evaluator_options_new( ) {
 	QsEvaluatorOptions result = malloc( sizeof (struct QsEvaluatorOptions) );
 	result->n_symbols = 0;
@@ -106,6 +109,13 @@ static ssize_t fermat_sync( QsEvaluator e,char** out ) {
 	char* result = NULL;
 	ssize_t len = getdelim( &result,&read,'#',e->in );
 
+	if( len==0 || result[ len-1 ]!='#' ) {
+		free( result );
+		finish_fermat( e );
+		init_fermat( e );
+		return 0;
+	}
+
 	const bool fermat_no_error = !( strstr( result,"Error" )|| strstr( result,"error" )|| strstr( result,"ERROR" )|| strstr( result,"***" ) );
 #ifdef DBG_EVALFILE
 	fputs( "\nSYNC OUTPUT: ",e->fermat_log );
@@ -134,11 +144,6 @@ static ssize_t fermat_sync( QsEvaluator e,char** out ) {
 		len = w-result-1;
 	} else
 		free( result );
-
-#if 0
-	if( out )
-		assert_sensible( *out );
-#endif
 
 	char* wastebin = NULL;
 	getdelim( &wastebin,&read,'0',e->in );
@@ -199,8 +204,7 @@ static void init_fermat( QsEvaluator e ) {
 			fprintf( stderr,"Could not spawn fermat instance!\n" );
 	}
 
-	fermat_submit( e,"&d\n0\n&M\n\n&(U=1)\n&(E=0)\n&(t=0)\n&(_t=0)\n&(_s=0)" );
-	fermat_sync( e,NULL );
+	fermat_submit( e,"&d\n0\n&M\n\n&(U=1)\n&(E=0)\n&(t=0)\n&(_t=0)\n&(_s=0)\n" );
 
 	int j;
 	for( j = 0; j<e->n_symbols; j++ ) {
@@ -216,7 +220,8 @@ static void init_fermat( QsEvaluator e ) {
 		}
 	}
 
-	fermat_sync( e,NULL );
+	if( !fermat_sync( e,NULL ) )
+		fprintf( stderr,"Warning: FERMAT initialization failed and reissued\n" );
 }
 
 QsEvaluator qs_evaluator_new( QsCompoundDiscoverer discover,QsEvaluatorOptions opts ) {
@@ -300,7 +305,7 @@ QsCoefficient qs_coefficient_one( bool minus ) {
 }
 
 static void finish_fermat( QsEvaluator e ) {
-	kill( e->cas,SIGTERM );
+	fermat_submit( e,"&q\n" );
 	fclose( e->in );
 	fclose( e->out );
 }
@@ -315,10 +320,14 @@ void qs_evaluator_evaluate( QsEvaluator e,QsCompound x,QsOperation op ) {
 }
 
 QsCoefficient qs_evaluator_receive( QsEvaluator e ) {
-	QsCoefficient result = malloc( sizeof (struct QsCoefficient) );
-	fermat_sync( e,&result->text );
+	QsCoefficient result = NULL;
+	char* text;
 
-	e->evaluations++;
+	if( fermat_sync( e,&text ) ) {
+		result = malloc( sizeof (struct QsCoefficient) );
+		result->text = text;
+		e->evaluations++;
+	}
 
 	return result;
 }
