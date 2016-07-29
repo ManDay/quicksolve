@@ -316,6 +316,9 @@ bool qs_terminal_queue_pop( QsTerminalQueue q ) {
 			if( !target || dvalue==0 || dvalue>max_dvalue ) {
 				target = current;
 				max_dvalue = dvalue;
+
+				if( dvalue==0 )
+					break;
 			}
 
 			current = QS_TERMINAL_LINK( current ).after;
@@ -325,6 +328,7 @@ bool qs_terminal_queue_pop( QsTerminalQueue q ) {
 			pthread_spin_lock( &target->result->lock );
 
 			qs_terminal_queue_del( q,target );
+			pthread_mutex_unlock( &q->lock );
 
 			if( target->result->refcount==0 ) {
 				popped = target->result->coefficient;
@@ -342,11 +346,12 @@ bool qs_terminal_queue_pop( QsTerminalQueue q ) {
 				pthread_spin_unlock( &target->result->lock );
 
 				target->manager->memory_callback( change,true,target->manager->upointer );
-			} else
+			} else {
 				pthread_spin_unlock( &target->result->lock );
+				pthread_mutex_unlock( &q->lock );
+			}
 		}
 
-		pthread_mutex_unlock( &q->lock );
 	} while( !popped && target );
 
 	return popped;
