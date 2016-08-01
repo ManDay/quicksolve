@@ -175,7 +175,8 @@ struct Worker {
 
 struct QsTerminalQueue {
 	pthread_mutex_t lock;
-	QsTerminal data;
+	QsTerminal first;
+	QsTerminal last;
 };
 
 struct QsTerminalMgr {
@@ -220,17 +221,20 @@ static QsTerminal aef_pop_independent( QsAEF );
 static void terminal_decrease_adc( QsTerminal,pthread_spinlock_t*,unsigned,unsigned );
 static void expression_clean( Expression );
 static void discard_unref( QsTerminal,bool );
+static bool qs_terminal_queued( QsTerminal );
 
 QsTerminalQueue qs_terminal_queue_new( ) {
 	QsTerminalQueue result = malloc( sizeof (struct QsTerminalQueue) );
 	pthread_mutex_init( &result->lock,NULL );
-	result->data = NULL;
+	result->first = NULL;
+	result->last = NULL;
 	
 	return result;
 }
 
 void qs_terminal_queue_destroy( QsTerminalQueue q ) {
-	assert( q->data==NULL );
+	assert( q->first==NULL );
+	assert( q->last==NULL );
 	pthread_mutex_destroy( &q->lock );
 	free( q );
 }
@@ -254,12 +258,14 @@ static void qs_terminal_queue_add( QsTerminalQueue q,QsTerminal t ) {
 	assert( QS_TERMINAL_LINK( t ).after==NULL );
 	assert( QS_TERMINAL_LINK( t ).before==NULL );
 
-	if( q->data )
-		QS_TERMINAL_LINK( q->data ).before = t;
+	if( q->first )
+		QS_TERMINAL_LINK( q->first ).before = t;
+	else
+		q->last = t;
 
 	QS_TERMINAL_LINK( t ).before = t;
-	QS_TERMINAL_LINK( t ).after = q->data;
-	q->data = t;
+	QS_TERMINAL_LINK( t ).after = q->first;
+	q->first = t;
 
 #if QS_STATUS
 	atomic_fetch_add_explicit( &status.queue_size,1,memory_order_relaxed );
@@ -267,12 +273,12 @@ static void qs_terminal_queue_add( QsTerminalQueue q,QsTerminal t ) {
 }
 
 static void qs_terminal_queue_del( QsTerminalQueue q,QsTerminal t ) {
-	if( QS_TERMINAL_LINK( t ).before ) {
+	if( qs_terminal_queued( t ) ) {
 		if( QS_TERMINAL_LINK( t ).before==t ) {
-			assert( q->data==t );
-			q->data = QS_TERMINAL_LINK( t ).after;
+			assert( q->first==t );
+			q->first = QS_TERMINAL_LINK( t ).after;
 		} else {
-			assert( q->data!=t );
+			assert( q->first!=t );
 			QS_TERMINAL_LINK( QS_TERMINAL_LINK( t ).before ).after = QS_TERMINAL_LINK( t ).after;
 		}
 
@@ -281,6 +287,11 @@ static void qs_terminal_queue_del( QsTerminalQueue q,QsTerminal t ) {
 				QS_TERMINAL_LINK( QS_TERMINAL_LINK( t ).after ).before = QS_TERMINAL_LINK( t ).after;
 			else
 				QS_TERMINAL_LINK( QS_TERMINAL_LINK( t ).after ).before = QS_TERMINAL_LINK( t ).before;
+		else
+			if( QS_TERMINAL_LINK( t ).before==t )
+				q->last = NULL;
+			else
+				q->last = QS_TERMINAL_LINK( t ).before;
 
 #if QS_STATUS
 		if( QS_TERMINAL_LINK( t ).after || QS_TERMINAL_LINK( t ).before )
@@ -299,6 +310,17 @@ void qs_terminal_mgr_destroy( QsTerminalMgr m ) {
 	free( m );
 }
 
+static unsigned qs_terminal_queue_count( QsTerminalQueue q ) {
+	QsTerminal current = q->first;
+	unsigned result = 0;
+	while( current ) {
+		current = QS_TERMINAL_LINK( current ).after;
+		result++;
+	}
+
+	return result;
+}
+
 bool qs_terminal_queue_pop( QsTerminalQueue q ) {
 	QsCoefficient popped = NULL;
 	QsTerminal target;
@@ -309,7 +331,12 @@ bool qs_terminal_queue_pop( QsTerminalQueue q ) {
 
 		pthread_mutex_lock( &q->lock );
 
-		QsTerminal current = q->data;
+/* If there is a D-Value 0 QsTerminal, implying early return (and with a
+ * sane choice of parameters, there is usually more than one), we move
+ * the chunk of the queue ranging from the beginning through the
+ * QsTerminal before the D-Value 0 one to the very end of the queue.
+ * This way, we will not re-iterate over them the next time. */
+		QsTerminal current = q->first;
 		while( current && !( target && max_dvalue==0 ) ) {
 			ADCValue dvalue = current->dvalue.value;
 
@@ -317,8 +344,14 @@ bool qs_terminal_queue_pop( QsTerminalQueue q ) {
 				target = current;
 				max_dvalue = dvalue;
 
-				if( dvalue==0 )
-					break;
+				if( dvalue==0 && QS_TERMINAL_LINK( current ).before!=current ) {
+					QS_TERMINAL_LINK( q->last ).after = q->first;
+					QS_TERMINAL_LINK( q->first ).before = q->last;
+					q->first = current;
+					q->last = QS_TERMINAL_LINK( current ).before;
+					QS_TERMINAL_LINK( QS_TERMINAL_LINK( current ).before ).after = NULL;
+					QS_TERMINAL_LINK( current ).before = current;
+				}
 			}
 
 			current = QS_TERMINAL_LINK( current ).after;
@@ -393,13 +426,6 @@ QsCoefficient qs_terminal_acquire( QsTerminal t ) {
 	assert( t->is_result );
 
 	if( t->manager && t->id ) {
-/* In order to prevent the QsTerminal to be added back to the queue
- * after we just removed it but before we could indicate usage, we keep
- * the queue locked until the refcount was increased. On the other hand,
- * the check whether a QsTerminal may be added back due to vanishing
- * refcount must happen under the same lock. Therefore, the only two
- * accesses to the refcount happen under the mutex of the queue and we
- * don't need additional locks. */
 		pthread_spin_lock( &result->lock );
 		result->refcount++;
 		pthread_spin_unlock( &result->lock );
@@ -456,7 +482,6 @@ QsAEF qs_aef_new( size_t limit_terminals  )
 #endif
 {
 	QsAEF result = malloc( sizeof (struct QsAEF) );
-
 
 	result->n_independent = 0;
 	result->independent = malloc( 0 );
@@ -635,7 +660,6 @@ static void remove_depender( QsTerminal dependee,QsTerminal depender ) {
 	dependee->dependers.operands[ j ]= NO_DEPENDER;
 
 	pthread_spin_unlock( &dependee->dependers_lock );
-	
 
 	pthread_spin_lock( &dependee->dvalue.lock );
 	dependee->dvalue.current_removal = depender;
@@ -646,10 +670,11 @@ static void remove_depender( QsTerminal dependee,QsTerminal depender ) {
 
 	ADCValue new_dvalue = recollect_dvalue( dependee,depender );
 
-	if( dependee->dvalue.value_on_hold!=0 && dependee->dvalue.value_on_hold<new_dvalue )
-		dependee->dvalue.value = dependee->dvalue.value_on_hold;
-	else
-		dependee->dvalue.value = new_dvalue;
+	if( dependee->dvalue.current_removal==depender )
+		if( dependee->dvalue.value_on_hold!=0 && dependee->dvalue.value_on_hold<new_dvalue )
+			dependee->dvalue.value = dependee->dvalue.value_on_hold;
+		else
+			dependee->dvalue.value = new_dvalue;
 
 	pthread_spin_unlock( &dependee->dvalue.lock );
 }
@@ -742,8 +767,16 @@ static void* worker( void* udata ) {
 				manage_tails( src->expression,false );
 
 				if( first_pass ) {
-					terminal_remove_dependencies( target );
 					terminal_decrease_adc( target,NULL,1,0 );
+
+/* It is important to remove dependencies only after a call to decrease
+ * the ADC, because only that way it is guaranteed that every update of
+ * parent D-values from within terminal_decrease_adc is followed by a
+ * removal (and thus recalculation) of the D-Value. Otherwise, the
+ * D-Value update sets the D-Value to 1 after the QsTerminal was already
+ * removed and causes a severe performance loss in qs_terminal_queue_pop
+ */
+					terminal_remove_dependencies( target );
 				}
 
 				result = qs_evaluator_receive( ev );
@@ -1193,12 +1226,14 @@ void qs_operand_unref( QsOperand o ) {
 					target->manager->discarder( target->id,target->manager->upointer );
 			}
 
+			pthread_spin_lock( &target->result->lock );
 			if( target->result->coefficient ) {
 				size_t change = qs_coefficient_size( target->result->coefficient );
 				qs_coefficient_destroy( target->result->coefficient );
 				if( target->manager )
 					target->manager->memory_callback( change,true,target->manager->upointer );
 			}
+			pthread_spin_unlock( &target->result->lock );
 
 			free( target->result );
 			free( target->dependers.operands );
