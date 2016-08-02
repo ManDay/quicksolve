@@ -395,7 +395,9 @@ void qs_terminal_load( QsTerminal t,QsCoefficient c ) {
 	assert( result->coefficient==NULL );
 	
 	size_t change = qs_coefficient_size( c );
+	pthread_spin_lock( &result->lock );
 	result->coefficient = c;
+	pthread_spin_unlock( &result->lock );
 
 	if( t->manager ) {
 		if( t->id && result->refcount==0 && !qs_terminal_queued( t ) ) {
@@ -1282,8 +1284,16 @@ static void pull_adc( QsTerminal parent,QsTerminal child,ADC* adc,struct Termina
 	if( !parent->is_result ) {
 		struct ADCData* adcd = &parent->expression->adc;
 
-		for( j = 0; j<parent->dependers.n_operands && !adc->overflow; j++ )
-			if( parent->dependers.operands[ j ]==child ) {
+		pthread_spin_lock( &parent->dependers_lock );
+		unsigned n_dependers = parent->dependers.n_operands;
+		pthread_spin_unlock( &parent->dependers_lock );
+
+		for( j = 0; j<n_dependers && !adc->overflow; j++ ) {
+			pthread_spin_lock( &parent->dependers_lock );
+			QsTerminal candidate = parent->dependers.operands[ j ];
+			pthread_spin_unlock( &parent->dependers_lock );
+
+			if( candidate==child ) {
 				pthread_spin_lock( &adcd->adc_contribution_lock );
 				ADC parent_adc = adcd->contributions[ j ];
 
@@ -1294,7 +1304,7 @@ static void pull_adc( QsTerminal parent,QsTerminal child,ADC* adc,struct Termina
 
 				pthread_spin_unlock( &adcd->adc_contribution_lock );
 			}
-
+		}
 	}
 	pthread_rwlock_unlock( &parent->lock );
 }
