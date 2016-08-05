@@ -10,8 +10,12 @@
 #include <assert.h>
 
 #define QS_TERMINAL_LINK( t ) ( t->result->link )
-#define ADC_BITS ( CHAR_BIT*sizeof (ADCValue) )
-#define MAX_ADC ( ( ( (ADCValue)1 )<<( ADC_BITS - 1 ) )- 1 )
+
+#define ADC_BITS ( CHAR_BIT*sizeof (ADC) )
+#define MAX_ADC ( ( ( (ADC)1 )<<( ADC_BITS - 1 ) )- 1 )
+#define ADC_OVERFLOWN ( (ADC)( ~( (ADC)0 ) ) )
+#define ADC_IS_OVERFLOW( a ) ( a==ADC_OVERFLOWN )
+
 #define NO_DEPENDER NULL
 
 #if DBG_LEVEL>0
@@ -45,11 +49,7 @@ enum Discard {
 typedef struct Expression* Expression;
 typedef struct BakedExpression* BakedExpression;
 typedef struct TerminalData* TerminalData;
-typedef unsigned short ADCValue;
-typedef struct {
-	bool overflow;
-	ADCValue value;
-} ADC;
+typedef unsigned char ADC;
 
 struct QsOperand {
 	atomic_uint refcount;
@@ -75,8 +75,12 @@ struct Expression {
 };
 
 struct ADCData {
+/** Multi-Purpose lock
+ *
+ * Locks for changes of any contribution and the ADC itsself */
 	pthread_spinlock_t adc_contribution_lock;
-/* The BakedExpression's ADC
+
+/** The BakedExpression's ADC
  *
  * Atomicity serves the purpose for faster, lockless reading when
  * re-calculating the D-Value. Otherwise, the adc_contribution_lock is
@@ -116,9 +120,9 @@ struct TerminalData {
 struct DValue {
 	pthread_spinlock_t lock;
 	QsTerminal current_removal;
-	ADCValue value_on_hold;
 
-	ADCValue value;
+	ADC value_on_hold;
+	ADC value;
 };
 
 struct TerminalList {
@@ -218,7 +222,7 @@ static QsCompound qs_operand_discoverer( Expression,unsigned,bool*,QsOperation* 
 static void* worker( void* );
 static void aef_push_independent( QsAEF,QsTerminal );
 static QsTerminal aef_pop_independent( QsAEF );
-static void terminal_decrease_adc( QsTerminal,pthread_spinlock_t*,unsigned,unsigned );
+static void terminal_decrease_adc( QsTerminal,unsigned,unsigned );
 static void expression_clean( Expression );
 static void discard_unref( QsTerminal,bool );
 static bool qs_terminal_queued( QsTerminal );
@@ -326,7 +330,7 @@ bool qs_terminal_queue_pop( QsTerminalQueue q ) {
 	QsTerminal target;
 
 	do {
-		ADCValue max_dvalue;
+		ADC max_dvalue;
 		target = NULL;
 
 		pthread_mutex_lock( &q->lock );
@@ -338,7 +342,7 @@ bool qs_terminal_queue_pop( QsTerminalQueue q ) {
  * This way, we will not re-iterate over them the next time. */
 		QsTerminal current = q->first;
 		while( current && !( target && max_dvalue==0 ) ) {
-			ADCValue dvalue = current->dvalue.value;
+			ADC dvalue = current->dvalue.value;
 
 			if( !target || dvalue==0 || dvalue>max_dvalue ) {
 				target = current;
@@ -611,10 +615,10 @@ static void manage_tails( struct Expression e,const bool require ) {
 	}
 }
 
-static ADCValue recollect_dvalue( QsTerminal dependee,QsTerminal removal ) {
+static ADC recollect_dvalue( QsTerminal dependee,QsTerminal removal ) {
 	int j = 0;
 
-	ADCValue new_dvalue = 0;
+	ADC new_dvalue = 0;
 
 	pthread_spin_lock( &dependee->dependers_lock );
 	while( dependee->dvalue.current_removal==removal && j<dependee->dependers.n_operands ) {
@@ -626,8 +630,8 @@ static ADCValue recollect_dvalue( QsTerminal dependee,QsTerminal removal ) {
 
 			ADC adc = atomic_load_explicit( &target->adc.adc,memory_order_relaxed );
 
-			if( !adc.overflow &&( new_dvalue==0 ||( adc.value + 1 )<new_dvalue ) )
-				new_dvalue = adc.value + 1;
+			if( !ADC_IS_OVERFLOW( adc )&&( new_dvalue==0 ||( adc + 1 )<new_dvalue ) )
+				new_dvalue = adc + 1;
 		}
 
 		pthread_spin_unlock( &dependee->dependers_lock );
@@ -670,7 +674,7 @@ static void remove_depender( QsTerminal dependee,QsTerminal depender ) {
 
 	pthread_spin_lock( &dependee->dvalue.lock );
 
-	ADCValue new_dvalue = recollect_dvalue( dependee,depender );
+	ADC new_dvalue = recollect_dvalue( dependee,depender );
 
 	if( dependee->dvalue.current_removal==depender )
 		if( dependee->dvalue.value_on_hold!=0 && dependee->dvalue.value_on_hold<new_dvalue )
@@ -685,10 +689,7 @@ static void terminal_independ( QsTerminal target ) {
 	unsigned previous_dc = atomic_fetch_sub_explicit( &target->expression->dc,1,memory_order_acq_rel );
 	
 	if( previous_dc==1 ) {
-		ADC adc;
-		// FIXME: This assert sporadically fails, the ADC is not correct for
-		// unknown reasons.
-		// assert( ( adc = atomic_load_explicit( &target->expression->adc.adc,memory_order_relaxed ),adc.value==1 ) );
+		assert( 1==atomic_load_explicit( &target->expression->adc.adc,memory_order_relaxed ) );
 		aef_push_independent( target->expression->queue,target );
 	}
 }
@@ -769,7 +770,8 @@ static void* worker( void* udata ) {
 				manage_tails( src->expression,false );
 
 				if( first_pass ) {
-					terminal_decrease_adc( target,NULL,1,0 );
+					pthread_spin_lock( &src->adc.adc_contribution_lock );
+					terminal_decrease_adc( target,1,0 );
 
 /* It is important to remove dependencies only after a call to decrease
  * the ADC, because only that way it is guaranteed that every update of
@@ -823,10 +825,12 @@ static void* worker( void* udata ) {
 /* After the unlock, any references from the frontend may be dropped.
  * Unless there are references held from dependers, we may no longer
  * refer to the target. */
+			bool discarded = target->discarded;
+
 			pthread_rwlock_unlock( &target->lock );
 
 #ifdef QS_OPERAND_ALLOW_DISCARD
-			if( target->discarded )
+			if( discarded )
 				discard_unref( target,target->discarded==DISCARD_ZERO );
 #endif
 
@@ -952,50 +956,58 @@ static void terminal_list_destroy( struct TerminalList* target ) {
 }
 
 static void terminal_add_dependency( QsTerminal dependee,QsTerminal depender ) {
-	pthread_spin_lock( &dependee->dependers_lock );
-	dependee->dependers.operands = realloc( dependee->dependers.operands,( dependee->dependers.n_operands + 1 )*sizeof (QsTerminal) );
-	dependee->dependers.operands[ dependee->dependers.n_operands ] = depender;
-
 /* Locking of the type change has to occur before the numer of operands
  * is increased so as to make sure that when worker reads in n_operands,
  * it is precisely the number of actually depending operands. See also
  * note in worker. */
 	pthread_rwlock_rdlock( &dependee->lock );
 
-	dependee->dependers.n_operands++;
-
 	if( !dependee->is_result ) {
 		struct ADCData* const dependee_adcd = &dependee->expression->adc;
 		struct ADCData* const depender_adcd = &depender->expression->adc;
 
 		pthread_spin_lock( &dependee_adcd->adc_contribution_lock );
+		pthread_spin_lock( &dependee->dependers_lock );
+
 		const ADC dependee_adc = atomic_load_explicit( &dependee_adcd->adc,memory_order_relaxed );
+
+		pthread_spin_lock( &depender_adcd->adc_contribution_lock );
+
+		ADC adc = atomic_load_explicit( &depender_adcd->adc,memory_order_relaxed );
+		if( ADC_IS_OVERFLOW( adc )|| ADC_IS_OVERFLOW( dependee_adc )||( adc + dependee_adc )>=MAX_ADC )
+			adc = ADC_OVERFLOWN;
+		else
+			adc +=  dependee_adc;
+
+		atomic_store_explicit( &depender_adcd->adc,adc,memory_order_relaxed );
+		atomic_fetch_add_explicit( &depender->expression->dc,1,memory_order_release );
+
+		pthread_spin_unlock( &depender_adcd->adc_contribution_lock );
+
+		dependee->dependers.operands = realloc( dependee->dependers.operands,( dependee->dependers.n_operands + 1 )*sizeof (QsTerminal) );
+		dependee->dependers.operands[ dependee->dependers.n_operands ] = depender;
+		dependee->dependers.n_operands++;
+
 		dependee_adcd->contributions = realloc( dependee_adcd->contributions,dependee->dependers.n_operands*sizeof (ADC) );
 		dependee_adcd->contributions[ dependee->dependers.n_operands - 1 ]= dependee_adc;
 
 		pthread_spin_unlock( &dependee->dependers_lock );
-
-		pthread_spin_lock( &depender_adcd->adc_contribution_lock );
 		pthread_spin_unlock( &dependee_adcd->adc_contribution_lock );
+	} else {
+		pthread_spin_lock( &dependee->dependers_lock );
 
-		ADC adc = atomic_load_explicit( &depender_adcd->adc,memory_order_relaxed );
-		if( adc.overflow || dependee_adc.overflow ||( adc.value + dependee_adc.value )>=MAX_ADC )
-			adc.overflow = true;
-		else
-			adc.value +=  dependee_adc.value;
+		dependee->dependers.operands = realloc( dependee->dependers.operands,( dependee->dependers.n_operands + 1 )*sizeof (QsTerminal) );
+		dependee->dependers.operands[ dependee->dependers.n_operands ] = depender;
+		dependee->dependers.n_operands++;
 
-		atomic_store_explicit( &depender_adcd->adc,adc,memory_order_relaxed );
-		pthread_spin_unlock( &depender_adcd->adc_contribution_lock );
-
-		atomic_fetch_add_explicit( &depender->expression->dc,1,memory_order_release );
-	} else
 		pthread_spin_unlock( &dependee->dependers_lock );
+	}
 
 	pthread_rwlock_unlock( &dependee->lock );
 }
 
-static void update_dvalue( QsTerminal target,ADCValue adc ) {
-	ADCValue dvalue = adc + 1;
+static void update_dvalue( QsTerminal target,ADC adc ) {
+	ADC dvalue = adc + 1;
 
 	pthread_spin_lock( &target->dvalue.lock );
 	
@@ -1031,7 +1043,7 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsOperation op,QsA
 	BakedExpression b = result->expression = malloc( sizeof (struct BakedExpression) );
 	Expression e = &b->expression;
 
-	atomic_init( &b->adc.adc,( (ADC){ false,1 } ) );
+	atomic_init( &b->adc.adc,1 );
 	atomic_init( &b->dc,1 );
 	atomic_init( &result->operand.refcount,1 );
 
@@ -1104,7 +1116,8 @@ QsTerminal qs_operand_bake( unsigned n_operands,QsOperand* os,QsOperation op,QsA
 
 	pthread_rwlock_unlock( &result->lock );
 
-	terminal_decrease_adc( result,NULL,0,0 );
+	pthread_spin_lock( &b->adc.adc_contribution_lock );
+	terminal_decrease_adc( result,0,0 );
 	terminal_independ( result );
 
 	return result;
@@ -1268,39 +1281,42 @@ void qs_operand_unref( QsOperand o ) {
 }
 
 static void pull_adc( QsTerminal parent,QsTerminal child,ADC* adc,struct TerminalList* done ) {
-	if( adc->overflow )
-		return;
-
-	int j;
-	for( j = 0; j<done->n_operands; j++ )
-		if( done->operands[ j ]==parent )
-			return;
-
-	done->operands = realloc( done->operands,( done->n_operands + 1 )*sizeof (QsTerminal) );
-	done->operands[ done->n_operands ]= parent;
-	done->n_operands++;
-
 	pthread_rwlock_rdlock( &parent->lock );
 	if( !parent->is_result ) {
+		int j;
+		for( j = 0; j<done->n_operands; j++ )
+			if( done->operands[ j ]==parent ) {
+				pthread_rwlock_unlock( &parent->lock );
+				return;
+			}
+
+		done->operands = realloc( done->operands,( done->n_operands + 1 )*sizeof (QsTerminal) );
+		done->operands[ done->n_operands ]= parent;
+		done->n_operands++;
+
 		struct ADCData* adcd = &parent->expression->adc;
 
+/* All references to the child are already registered at that point,
+ * because the child is assumed to have been fully constructed (and thus
+ * fully registered) at this point, which is enforced by the trylock. */
 		pthread_spin_lock( &parent->dependers_lock );
 		unsigned n_dependers = parent->dependers.n_operands;
 		pthread_spin_unlock( &parent->dependers_lock );
 
-		for( j = 0; j<n_dependers && !adc->overflow; j++ ) {
+		for( j = 0; j<n_dependers && !ADC_IS_OVERFLOW( *adc ); j++ ) {
 			pthread_spin_lock( &parent->dependers_lock );
 			QsTerminal candidate = parent->dependers.operands[ j ];
 			pthread_spin_unlock( &parent->dependers_lock );
 
 			if( candidate==child ) {
 				pthread_spin_lock( &adcd->adc_contribution_lock );
+
 				ADC parent_adc = adcd->contributions[ j ];
 
-				if( parent_adc.overflow || adc->overflow ||( adc->value + parent_adc.value )>=MAX_ADC )
-					adc->overflow = true;
+				if( ADC_IS_OVERFLOW( parent_adc )|| ADC_IS_OVERFLOW( *adc )||( *adc + parent_adc )>=MAX_ADC )
+					*adc = ADC_OVERFLOWN;
 				else
-					adc->value += parent_adc.value;
+					*adc += parent_adc;
 
 				pthread_spin_unlock( &adcd->adc_contribution_lock );
 			}
@@ -1309,33 +1325,7 @@ static void pull_adc( QsTerminal parent,QsTerminal child,ADC* adc,struct Termina
 	pthread_rwlock_unlock( &parent->lock );
 }
 
-static ADC recollect_adc( QsTerminal t ) {
-	ADC result = { false,1 };
-	BakedExpression e = t->expression;
-
-	struct TerminalList already_pulled = { 0,malloc( 0 ) };
-
-	int j;
-	for( j = 0; j<e->expression.n_operands; j++ ) {
-		QsOperand next_raw = e->expression.operands[ j ];
-		
-		if( next_raw->is_terminal )
-			pull_adc( (QsTerminal)next_raw,t,&result,&already_pulled );
-		else {
-			QsIntermediate next = (QsIntermediate)next_raw;
-
-			int k;
-			for( k = 0; k<next->cache_tails->n_operands; k++ )
-				pull_adc( next->cache_tails->operands[ k ],t,&result,&already_pulled );
-		}
-	}
-
-	free( already_pulled.operands );
-
-	return result;
-}
-
-static void terminal_decrease_adc( QsTerminal t,pthread_spinlock_t* parent_lock,unsigned decrement,unsigned rd ) {
+static void terminal_decrease_adc( QsTerminal t,unsigned decrement,unsigned rd ) {
 	assert( !t->is_result );
 
 	BakedExpression e = t->expression;
@@ -1344,10 +1334,7 @@ static void terminal_decrease_adc( QsTerminal t,pthread_spinlock_t* parent_lock,
 
 	ADC adc = atomic_load_explicit( &adcd->adc,memory_order_relaxed );
 
-	if( adc.overflow ) {
-		if( parent_lock )
-			pthread_spin_unlock( parent_lock );
-
+	if( ADC_IS_OVERFLOW( adc ) ) {
 /* Trylock asserts that recollection of the ADC is only performed after
  * the target has been completely constructed and its ADC is thus
  * strictly decreasing, which allows us to infer whether our result for
@@ -1356,39 +1343,48 @@ static void terminal_decrease_adc( QsTerminal t,pthread_spinlock_t* parent_lock,
 		if( !pthread_rwlock_tryrdlock( &t->lock ) ) {
 			pthread_rwlock_unlock( &t->lock );
 
-			ADC new_adc = recollect_adc( t );
+			ADC new_adc = 1;
+			struct TerminalList already_pulled = { 0,malloc( 0 ) };
 
-			pthread_spin_lock( &t->dependers_lock );
-			pthread_spin_lock( &adcd->adc_contribution_lock );
-			adc = atomic_load_explicit( &adcd->adc,memory_order_relaxed );
-			if( !new_adc.overflow )
-				if( adc.overflow || adc.value>new_adc.value ) {
-					adc = new_adc;
-					atomic_store_explicit( &adcd->adc,new_adc,memory_order_relaxed );
-					n_dependers_at_change = t->dependers.n_operands;
+			int j;
+			for( j = 0; j<e->expression.n_operands; j++ ) {
+				QsOperand next_raw = e->expression.operands[ j ];
+				
+				if( next_raw->is_terminal )
+					pull_adc( (QsTerminal)next_raw,t,&new_adc,&already_pulled );
+				else {
+					QsIntermediate next = (QsIntermediate)next_raw;
+
+					int k;
+					for( k = 0; k<next->cache_tails->n_operands; k++ )
+						pull_adc( next->cache_tails->operands[ k ],t,&new_adc,&already_pulled );
 				}
-			pthread_spin_unlock( &adcd->adc_contribution_lock );
-			pthread_spin_unlock( &t->dependers_lock );
+			}
+
+			if( !ADC_IS_OVERFLOW( new_adc ) ) {
+				pthread_spin_lock( &t->dependers_lock );
+
+				bool update = atomic_compare_exchange_strong_explicit( &adcd->adc,( &( (ADC){ ADC_OVERFLOWN } ) ),new_adc,memory_order_acq_rel,memory_order_relaxed );
+				assert( update );
+
+				n_dependers_at_change = t->dependers.n_operands;
+
+				pthread_spin_unlock( &t->dependers_lock );
+			}
+
+			free( already_pulled.operands );
 		}
 	} else {
 		pthread_spin_lock( &t->dependers_lock );
-		pthread_spin_lock( &adcd->adc_contribution_lock );
+		assert( adc>=decrement );
 
-		adc = atomic_load_explicit( &adcd->adc,memory_order_relaxed );
-		assert( adc.value>=decrement );
+		atomic_fetch_sub_explicit( &adcd->adc,decrement,memory_order_relaxed );
+		n_dependers_at_change = t->dependers.n_operands;
 
-		if( !adc.overflow ) {
-			adc.value -= decrement;
-			atomic_store_explicit( &adcd->adc,adc,memory_order_relaxed );
-			n_dependers_at_change = t->dependers.n_operands;
-		}
-
-		if( parent_lock )
-			pthread_spin_unlock( parent_lock );
-
-		pthread_spin_unlock( &adcd->adc_contribution_lock );
 		pthread_spin_unlock( &t->dependers_lock );
 	}
+
+	pthread_spin_unlock( &adcd->adc_contribution_lock );
 
 	int j;
 	for( j = 0; j<n_dependers_at_change; j++ ) {
@@ -1396,43 +1392,46 @@ static void terminal_decrease_adc( QsTerminal t,pthread_spinlock_t* parent_lock,
 		QsTerminal depender = t->dependers.operands[ j ];
 		pthread_spin_unlock( &t->dependers_lock );
 
+		pthread_spin_lock( &depender->expression->adc.adc_contribution_lock );
 		pthread_spin_lock( &adcd->adc_contribution_lock );
 
 		adc = atomic_load_explicit( &adcd->adc,memory_order_relaxed );
 
-		if( adcd->contributions[ j ].overflow ) {
+		if( ADC_IS_OVERFLOW( adcd->contributions[ j ] ) ) {
 			adcd->contributions[ j ]= adc;
+			pthread_spin_unlock( &adcd->adc_contribution_lock );
 
-			ADC child_adc = atomic_load( &depender->expression->adc.adc );
-			assert( !adc.overflow && child_adc.overflow );
-
-			terminal_decrease_adc( depender,&adcd->adc_contribution_lock,0,rd + 1 );
+			terminal_decrease_adc( depender,0,rd + 1 );
 		} else {
-			const ADCValue discrepancy = adcd->contributions[ j ].value- adc.value;
+			const ADC discrepancy = adcd->contributions[ j ]- adc;
 			const unsigned bitshift = rd*2;
-			const ADCValue discrepancy_limit = 1<<bitshift;
+			const ADC discrepancy_limit = 1<<bitshift;
 
 			if( bitshift<ADC_BITS && discrepancy>=discrepancy_limit ) {
 				adcd->contributions[ j ]= adc;
-				terminal_decrease_adc( depender,&adcd->adc_contribution_lock,discrepancy,rd + 1 );
-			} else
 				pthread_spin_unlock( &adcd->adc_contribution_lock );
+
+				terminal_decrease_adc( depender,discrepancy,rd + 1 );
+			} else {
+				pthread_spin_unlock( &adcd->adc_contribution_lock );
+				pthread_spin_unlock( &depender->expression->adc.adc_contribution_lock );
+			}
 		}
 	}
 
-	if( !adc.overflow && !pthread_rwlock_tryrdlock( &t->lock ) ) {
+	if( !ADC_IS_OVERFLOW( adc )&& !pthread_rwlock_tryrdlock( &t->lock ) ) {
 		int j;
 		for( j = 0; j<e->expression.n_operands; j++ ) {
 			QsOperand next_raw = e->expression.operands[ j ];
 			
 			if( next_raw->is_terminal )
-				update_dvalue( (QsTerminal)next_raw,adc.value );
+				update_dvalue( (QsTerminal)next_raw,adc );
 			else {
 				QsIntermediate next = (QsIntermediate)next_raw;
 
 				int k;
 				for( k = 0; k<next->cache_tails->n_operands; k++ )
-					update_dvalue( next->cache_tails->operands[ k ],adc.value );
+					update_dvalue( next->cache_tails->operands[ k ],adc );
 			}
 		}
 

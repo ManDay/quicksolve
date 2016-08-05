@@ -80,6 +80,8 @@ int main( int argv,char* argc[ ] ) {
 	for( j = 0; j<n_symb_strings; j++ )
 		qs_evaluator_options_add( opts,symb_strings[ j ],NULL );
 
+	qs_evaluator_options_add( opts,"!",FERMAT_BINARY );
+
 #if QS_STATUS
 	QsAEF aef = qs_aef_new( 0,true );
 #else
