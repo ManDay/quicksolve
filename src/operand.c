@@ -387,7 +387,8 @@ bool qs_terminal_queue_pop( QsTerminalQueue q ) {
 				pthread_spin_unlock( &target->result->lock );
 				pthread_mutex_unlock( &q->lock );
 			}
-		}
+		} else
+			pthread_mutex_unlock( &q->lock );
 
 	} while( !popped && target );
 
