@@ -372,6 +372,8 @@ bool qs_terminal_queue_pop( QsTerminalQueue q ) {
 				target->result->coefficient = NULL;
 
 				size_t change = qs_coefficient_size( popped );
+				void* upointer = target->manager->upointer;
+
 				if( target->manager->saver )
 					target->manager->saver( popped,target->id,target->manager->upointer );
 				else
@@ -382,7 +384,7 @@ bool qs_terminal_queue_pop( QsTerminalQueue q ) {
  * may be read. */
 				pthread_spin_unlock( &target->result->lock );
 
-				target->manager->memory_callback( change,true,target->manager->upointer );
+				target->manager->memory_callback( change,true,upointer );
 			} else {
 				pthread_spin_unlock( &target->result->lock );
 				pthread_mutex_unlock( &q->lock );
