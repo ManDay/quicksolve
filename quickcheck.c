@@ -42,7 +42,7 @@ int main( const int argc,char* const argv[ ] ) {
 		exit( EXIT_FAILURE );
 	}
 
-	QsAEF aef = qs_aef_new( );
+	QsAEF aef = qs_aef_new( 0 );
 
 	int j;
 	for( j = 0; j<num_processors; j++ )
@@ -77,10 +77,11 @@ int main( const int argc,char* const argv[ ] ) {
 
 					for( k = 0; k<qs_expression_n_terms( e ); k++ ) {
 						QsCoefficient coeff = qs_expression_coefficient( e,k );
-						QsOperand issue = (QsOperand)qs_operand_new_from_coefficient( coeff );
-						qs_terminal_group_push( checks,qs_operand_bake( 1,&issue,aef,QS_OPERATION_ADD ) );
+						QsTerminal issue = qs_operand_new( NULL,NULL );
+						qs_terminal_load( issue,coeff );
+						qs_terminal_group_push( checks,qs_operand_bake( 1,(QsOperand*)&issue,QS_OPERATION_ADD,aef,NULL,NULL ) );
 
-						qs_operand_unref( issue );
+						qs_operand_unref( (QsOperand)issue );
 						qs_integral_destroy( qs_expression_integral( e,k ) );
 					}
 
@@ -88,9 +89,7 @@ int main( const int argc,char* const argv[ ] ) {
 
 					while( qs_terminal_group_count( checks ) ) {
 						qs_terminal_group_wait( checks );
-						QsTerminal finish;
-						qs_terminal_group_pop( checks,&finish );
-						qs_operand_unref( (QsOperand)finish );
+						qs_operand_unref( (QsOperand)qs_terminal_group_pop( checks ) );
 					}
 
 					qs_terminal_group_destroy( checks );
