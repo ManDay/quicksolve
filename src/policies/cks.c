@@ -79,7 +79,7 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair ) {
 
 	DBG_PRINT_2( "Attempting to delete symbolically evaluated zeroes {\n",info->rd );
 	QsTerminal finished;
-	while(  qs_terminal_group_count( symbolic_waiter )&&( ( info->elimination==ELIMINATE_WAIT &&( qs_terminal_group_wait( symbolic_waiter ),true ),finished = qs_terminal_group_pop( symbolic_waiter ) ) ) ) {
+	while( !next_meta && qs_terminal_group_count( symbolic_waiter )&&( info->elimination==ELIMINATE_WAIT &&( qs_terminal_group_wait( symbolic_waiter ),true ),finished = qs_terminal_group_pop( symbolic_waiter ) ) ) {
 		unsigned finished_j = index_by_operand( info->graph,i,(QsOperand)finished,false );
 
 		bool is_zero = qs_coefficient_is_zero( qs_terminal_acquire( finished ) );
@@ -93,8 +93,10 @@ static void cks( struct CKSInfo* info,QsComponent i,QS_DESPAIR despair ) {
 			fprintf( stderr,"Warning: Numeric cancellation on edge of pivot %i\n",meta->order );
 		}
 	}
-	if( qs_terminal_group_count( symbolic_waiter ) )
+
+	if( !next_meta && qs_terminal_group_count( symbolic_waiter ) )
 		fprintf( stderr,"Warning: Unverified numeric zero remain in pivot %i\n",meta->order );
+
 	DBG_PRINT_2( "}\n",info->rd );
 
 	qs_terminal_group_destroy( waiter );
