@@ -314,17 +314,6 @@ void qs_terminal_mgr_destroy( QsTerminalMgr m ) {
 	free( m );
 }
 
-static unsigned qs_terminal_queue_count( QsTerminalQueue q ) {
-	QsTerminal current = q->first;
-	unsigned result = 0;
-	while( current ) {
-		current = QS_TERMINAL_LINK( current ).after;
-		result++;
-	}
-
-	return result;
-}
-
 bool qs_terminal_queue_pop( QsTerminalQueue q ) {
 	QsCoefficient popped = NULL;
 	QsTerminal target;
@@ -679,11 +668,12 @@ static void remove_depender( QsTerminal dependee,QsTerminal depender ) {
 
 	ADC new_dvalue = recollect_dvalue( dependee,depender );
 
-	if( dependee->dvalue.current_removal==depender )
+	if( dependee->dvalue.current_removal==depender ) {
 		if( dependee->dvalue.value_on_hold!=0 && dependee->dvalue.value_on_hold<new_dvalue )
 			dependee->dvalue.value = dependee->dvalue.value_on_hold;
 		else
 			dependee->dvalue.value = new_dvalue;
+	}
 
 	pthread_spin_unlock( &dependee->dvalue.lock );
 }

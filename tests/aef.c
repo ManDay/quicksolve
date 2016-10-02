@@ -183,7 +183,7 @@ int main( int argv,char* argc[ ] ) {
 
 		char* result_str;
 		qs_coefficient_print( result,&result_str );
-		printf( "c%i = suppressed\n",target.name,result_str );
+		printf( "c%i = suppressed\n",target.name /*,result_str*/ );
 		free( result_str );
 
 		qs_terminal_release( result_terminal );

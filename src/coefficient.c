@@ -112,7 +112,7 @@ static ssize_t fermat_sync( QsEvaluator e,char** out ) {
 	if( len==0 || result[ len-1 ]!='#' ) {
 		free( result );
 		finish_fermat( e );
-		init_fermat( e );
+
 		return 0;
 	}
 
@@ -160,8 +160,6 @@ static void fermat_submit( QsEvaluator e,const char* data ) {
 }
 
 static void init_fermat( QsEvaluator e ) {
-	e->evaluations = 0;
-
 	int in_pipe[ 2 ],out_pipe[ 2 ];
 
 	// US <- THEM
@@ -243,6 +241,7 @@ QsEvaluator qs_evaluator_new( QsCompoundDiscoverer discover,QsEvaluatorOptions o
 	result->substitutions = malloc( opts->n_symbols*sizeof (char*) );
 	result->n_symbols = opts->n_symbols;
 	result->binary = strdup( opts->binary );
+	result->evaluations = 0;
 
 	int j;
 	for( j = 0; j<opts->n_symbols; j++ ) {
@@ -252,8 +251,6 @@ QsEvaluator qs_evaluator_new( QsCompoundDiscoverer discover,QsEvaluatorOptions o
 		else
 			result->substitutions[ j ]= NULL;
 	}
-
-	init_fermat( result );
 
 	return result;
 }
@@ -308,12 +305,14 @@ static void finish_fermat( QsEvaluator e ) {
 	fermat_submit( e,"&q\n" );
 	fclose( e->in );
 	fclose( e->out );
+
+	e->evaluations = 0;
 }
 
 void qs_evaluator_evaluate( QsEvaluator e,QsCompound x,QsOperation op ) {
-	if( e->max_evaluations && e->evaluations>=e->max_evaluations ) {
-		finish_fermat( e );
+	if( e->evaluations==0 ) {
 		init_fermat( e );
+		e->evaluations++;
 	}
 
 	submit_compound( e,x,op );
@@ -326,14 +325,21 @@ QsCoefficient qs_evaluator_receive( QsEvaluator e ) {
 	if( fermat_sync( e,&text ) ) {
 		result = malloc( sizeof (struct QsCoefficient) );
 		result->text = text;
-		e->evaluations++;
+
+		if( e->max_evaluations ) {
+			e->evaluations++;
+
+			if( e->evaluations>e->max_evaluations )
+				finish_fermat( e );
+		}
 	}
 
 	return result;
 }
 
 void qs_evaluator_destroy( QsEvaluator e ) {
-	finish_fermat( e );
+	if( e->evaluations )
+		finish_fermat( e );
 
 	int j;
 	for( j = 0; j<e->n_symbols; j++ ) {
