@@ -175,18 +175,11 @@ void qs_integral_mgr_save_expression( QsIntegralMgr m,QsComponent i,struct QsRef
 	qs_expression_disband( e );
 }
 
-struct QsReflist qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,struct QsMetadata* meta ) {
-	struct QsReflist result ={ 0,NULL };
-
-	if( m->integrals[ i ].master )
-		return result;
-
-	QsIntegral in = m->integrals[ i ].integral;
-	QsPrototype p = qs_integral_prototype( in );
-
-	QsExpression e = NULL;
+QsExpression qs_integral_mgr_load_raw( QsIntegralMgr m,QsIntegral in,struct QsMetadata* meta ) {
+	QsExpression result = NULL;
 	bool sub_self = false;
-	struct Databases dbs = open_db( m,p,false );
+
+	struct Databases dbs = open_db( m,qs_integral_prototype( in ),false );
 
 	unsigned n_powers = qs_integral_n_powers( in );
 	const QsPower* pwrs = qs_integral_powers( in );
@@ -196,7 +189,7 @@ struct QsReflist qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,
 	if( dbs.readwrite &&( data = qs_db_get( dbs.readwrite,(char*)pwrs,keylen ) ) ) {
 		/* Obtain identity from solution database */
 		unsigned n;
-		e = qs_expression_new_from_binary( data->val,data->vallen,&n );
+		result = qs_expression_new_from_binary( data->val,data->vallen,&n );
 
 		if( data->vallen>=n+QS_METADATA_SIZE ) {
 			meta->order = *( (int*)( data->val + n ) );
@@ -217,38 +210,49 @@ struct QsReflist qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,
 		qs_db_entry_destroy( data );
 	} else if( dbs.read &&( data = qs_db_get( dbs.read,(char*)pwrs,keylen ) ) ) {
 		/* Obtain identity from identity database */
-		e = qs_expression_new_from_binary( data->val,data->vallen,NULL );
+		result = qs_expression_new_from_binary( data->val,data->vallen,NULL );
 		meta->order = *( (int*)( data->val + data->vallen - sizeof (int) ) );
 		meta->consideration = 0;
 		meta->solved = false;
 		meta->touched = false;
 
-		if( e )
-			if( qs_expression_n_terms( e )==1 && qs_coefficient_is_one( qs_expression_coefficient( e,0 ) ) )
+		if( result )
+			if( qs_expression_n_terms( result )==1 && qs_coefficient_is_one( qs_expression_coefficient( result,0 ) ) )
 				sub_self = true;
 
 		qs_db_entry_destroy( data );
-	} else {
-		m->integrals[ i ].master = true;
+	} else
 		return result;
-	}
 
 	/* TODO: Discarding the number of considerations on write back
 	 * operations for memory reduction has side effects when we are in a
 	 * desperate back substitutions. */
 	meta->consideration = 0;
 
-	unsigned n = qs_expression_n_terms( e );
+	if( qs_expression_n_terms( result )==0 || sub_self )
+		qs_expression_add( result,qs_coefficient_one( true ),qs_integral_cpy( in ) );
 
-	if( n==0 || sub_self )
-		result.n_references = 1 + n;
-	else
-		result.n_references = n;
+	return result;
+}
 
+struct QsReflist qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,struct QsMetadata* meta ) {
+	struct QsReflist result ={ 0,NULL };
+
+	if( m->integrals[ i ].master )
+		return result;
+
+	QsExpression e = qs_integral_mgr_load_raw( m,m->integrals[ i ].integral,meta );
+	
+	if( !e ) {
+		m->integrals[ i ].master = true;
+		return result;
+	}
+
+	result.n_references = qs_expression_n_terms( e );
 	result.references = malloc( result.n_references*sizeof (struct QsReference) );
 		
 	int j;
-	for( j = 0; j<n; j++ ) {
+	for( j = 0; j<result.n_references; j++ ) {
 		QsIntegral integral = qs_expression_integral( e,j );
 		QsCoefficient coefficient = qs_expression_coefficient( e,j );
 
@@ -261,11 +265,6 @@ struct QsReflist qs_integral_mgr_load_expression( QsIntegralMgr m,QsComponent i,
 	}
 
 	qs_expression_disband( e );
-
-	if( n==0 || sub_self ) {
-		result.references[ j ].coefficient = qs_coefficient_one( true );
-		result.references[ j ].head = i;
-	}
 	
 	return result;
 }

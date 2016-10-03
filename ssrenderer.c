@@ -9,6 +9,7 @@
 #include "src/metadata.h"
 #include "src/expression.h"
 #include "src/db.h"
+#include "src/integralmgr.h"
 
 /** Subsampling Renderer
  *
@@ -24,6 +25,9 @@
  * integrals do have an expression assigned to them and thus an column
  * or which are masters.
  */
+
+#define DRAW_TRESHOLD 0.6f
+#define DRAW_MAX 0.8f
 
 const char const usage[ ]= "The Source is the doc.";
 
@@ -56,12 +60,9 @@ struct {
 	struct Master* columns;
 } master_map;
 
-
-typedef void(* LoopCallbackFunc)( unsigned,QsIntegral,QsExpression );
-
-struct LoopCallback {
-	LoopCallbackFunc function;
-	bool with_expression;
+struct RowTask {
+	QsExpression expression;
+	unsigned row;
 };
 
 bool use_ids = false;
@@ -73,88 +74,7 @@ struct MasterSector** masters;
 unsigned n_masters = 0;
 struct Sector* pivots;
 
-struct DbTarget {
-	QsDb db;
-	unsigned prototype_id;
-};
-
-void process_db( struct DbTarget* target,struct LoopCallback* callback ) {
-	QsDb db = target->db;
-	unsigned prototype_id = target->prototype_id;
-	free( target );
-
-	QsDbCursor cur = qs_db_cursor_new( db );
-
-	struct QsDbEntry* row;
-	while( ( row = qs_db_cursor_next( cur ) ) ) {
-		if( memcmp( row->key,"generated",row->keylen )&& memcmp( row->key,"setup",row->keylen ) ) {
-			char* integral_str;
-			size_t integral_str_len = asprintf( &integral_str,"PR%u",prototype_id );
-			integral_str = realloc( integral_str,integral_str_len + 1 + row->keylen );
-			memcpy( integral_str + integral_str_len + 1,row->key,row->keylen );
-			integral_str_len += 1 + row->keylen;
-
-			QsIntegral integral = qs_integral_new_from_binary( integral_str,integral_str_len );
-
-			free( integral_str );
-
-			unsigned order = *( (int*)( row->val +( row->vallen - sizeof (int) ) ) );
-
-			if( callback->with_expression ) {
-				QsExpression e = qs_expression_new_from_binary( row->val,row->vallen - sizeof (int),NULL );
-				callback->function( order,integral,e );
-				qs_expression_destroy( e );
-			} else
-				callback->function( order,integral,NULL );
-
-			qs_integral_destroy( integral );
-		}
-
-		qs_db_entry_destroy( row );
-	}
-
-	qs_db_cursor_destroy( cur );
-	qs_db_destroy( db );
-}
-
-void loop_all_dbs( int argc,char* const argv[ ],bool with_expression,LoopCallbackFunc cbf,unsigned n_threads ) {
-	struct LoopCallback cb ={ cbf,with_expression };
-	GThreadPool* pool = g_thread_pool_new( (GFunc)process_db,&cb,n_threads,TRUE,NULL );
-
-	int j;
-	for( j = optind; j<argc; j++ ) {
-
-		char* fullname;
-		unsigned prototype_id;
-
-		if( use_ids ) {
-			prototype_id = strtoul( argv[ j ],NULL,0 );
-			asprintf( &fullname,"idPR%i.dat#type=kch",prototype_id );
-		} else {
-			prototype_id = strtoul( argv[ j ]+ 4,NULL,0 );
-			asprintf( &fullname,"%s#type=kch",argv[ j ] );
-		}
-		
-		QsDb db = qs_db_new( fullname,QS_DB_READ );
-
-		free( fullname );
-
-		if( db ) {
-			struct DbTarget* target = malloc( sizeof (struct DbTarget) );
-			target->db = db;
-			target->prototype_id = prototype_id;
-
-			g_thread_pool_push( pool,target,NULL );
-		} else {
-			fprintf( stderr,"Error: Could not load database\n" );
-			exit( EXIT_FAILURE );
-		}
-	}
-
-	g_thread_pool_free( pool,FALSE,TRUE );
-}
-
-void establish_order( unsigned order,QsIntegral integral,QsExpression e ) {
+void establish_order( unsigned order,QsIntegral integral ) {
 	int i = 0;
 
 	pivot_map.n_columns++;
@@ -184,74 +104,73 @@ void establish_order( unsigned order,QsIntegral integral,QsExpression e ) {
 	}
 }
 
-void fill_data( unsigned order,QsIntegral integral,QsExpression e ) {
-	unsigned row = 0;
-	while( row<pivot_map.n_columns && qs_integral_cmp( pivot_map.columns[ row ].integral,integral ) )
-		row++;
+void fill_data( struct RowTask* t,gpointer upointer ) {
+	QsExpression e = t->expression;
+	unsigned row = t->row;
 
-	const unsigned end_row = base_row + resolution*height;
+	free( t );
+
+	unsigned y =( row - base_row )/resolution;
+
 	const unsigned end_col = base_col + resolution*width;
+	bool diagonal_found = false;
 
-	if( row>=base_row && row<end_row ) {
-		unsigned y =( row - base_row )/resolution;
+	int i;
+	for( i = 0; i<qs_expression_n_terms( e ); i++ ) {
+		unsigned col = 0;
+		const QsIntegral col_integral = qs_expression_integral( e,i );
 
-		int i;
-		bool diagonal_found = false;
+		while( col<pivot_map.n_columns && qs_integral_cmp( pivot_map.columns[ col ].integral,col_integral ) )
+			col++;
 
-		for( i = 0; i<qs_expression_n_terms( e ); i++ ) {
-			unsigned col = 0;
-			const QsIntegral col_integral = qs_expression_integral( e,i );
+		if( col<pivot_map.n_columns ) {
+			if( col==row )
+				diagonal_found = true;
 
-			while( col<pivot_map.n_columns && qs_integral_cmp( pivot_map.columns[ col ].integral,col_integral ) )
+			if( col>=base_col && col<end_col )
+				g_atomic_int_add( &( pivots + width*y )[ ( col - base_col )/resolution ].n_coefficients,1 );
+		} else {
+			col = 0;
+			unsigned x;
+
+			g_rw_lock_reader_lock( &master_lock );
+
+			while( col<master_map.n_columns && qs_integral_cmp( master_map.columns[ col ].integral,col_integral ) )
 				col++;
 
-			if( col<pivot_map.n_columns ) {
-				if( col==row )
-					diagonal_found = true;
-
-				if( col>=base_col && col<end_col )
-					g_atomic_int_add( &( pivots + width*y )[ ( col - base_col )/resolution ].n_coefficients,1 );
-			} else {
-				col = 0;
-				unsigned x;
-
-				g_rw_lock_reader_lock( &master_lock );
+			if( !( col<master_map.n_columns ) ) {
+				g_rw_lock_reader_unlock( &master_lock );
+				g_rw_lock_writer_lock( &master_lock );
 
 				while( col<master_map.n_columns && qs_integral_cmp( master_map.columns[ col ].integral,col_integral ) )
 					col++;
 
 				if( !( col<master_map.n_columns ) ) {
-					g_rw_lock_reader_unlock( &master_lock );
-					g_rw_lock_writer_lock( &master_lock );
-
-					while( col<master_map.n_columns && qs_integral_cmp( master_map.columns[ col ].integral,col_integral ) )
-						col++;
-
-					if( !( col<master_map.n_columns ) ) {
-						master_map.columns = realloc( master_map.columns,( master_map.n_columns + 1 )*sizeof (struct Master) );
-						master_map.columns[ master_map.n_columns++ ]= (struct Master) { qs_integral_cpy( col_integral ) };
-					}
-
-					x = col/resolution;
-
-					if( !( x<n_masters ) ) {
-						masters = realloc( masters,( ++n_masters )*sizeof (struct MasterSector*) );
-						masters[ x ]= calloc( height,sizeof (struct MasterSector) );
-					}
-
-					g_rw_lock_writer_unlock( &master_lock );
-				} else {
-					x = col/resolution;
-					g_rw_lock_reader_unlock( &master_lock );
+					master_map.columns = realloc( master_map.columns,( master_map.n_columns + 1 )*sizeof (struct Master) );
+					master_map.columns[ master_map.n_columns++ ]= (struct Master) { qs_integral_cpy( col_integral ) };
 				}
 
-				g_atomic_int_add( &masters[ x ][ y ].n_coefficients,1 );
-			}
-		}
+				x = col/resolution;
 
-		if( !diagonal_found && row>=base_col && row<end_col )
-			g_atomic_int_add( &( pivots + width*y )[ ( row-base_col )/resolution ].n_missing,1 );
+				if( !( x<n_masters ) ) {
+					masters = realloc( masters,( ++n_masters )*sizeof (struct MasterSector*) );
+					masters[ x ]= calloc( height,sizeof (struct MasterSector) );
+				}
+
+				g_rw_lock_writer_unlock( &master_lock );
+			} else {
+				x = col/resolution;
+				g_rw_lock_reader_unlock( &master_lock );
+			}
+
+			g_atomic_int_add( &masters[ x ][ y ].n_coefficients,1 );
+		}
 	}
+
+	if( !diagonal_found && row>=base_col && row<end_col )
+		g_atomic_int_add( &( pivots + width*y )[ ( row-base_col )/resolution ].n_missing,1 );
+
+	qs_expression_destroy( e );
 }
 
 int main( const int argc,char* const argv[ ] ) {
@@ -308,7 +227,54 @@ int main( const int argc,char* const argv[ ] ) {
 	master_map.columns = malloc( 0 );
 
 	printf( "Stage I:   Gapless resort of orders...\n" );
-	loop_all_dbs( argc,argv,false,establish_order,1 );
+	int j;
+	for( j = optind; j<argc; j++ ) {
+		char* fullname;
+		unsigned prototype_id;
+
+		if( use_ids ) {
+			prototype_id = strtoul( argv[ j ],NULL,0 );
+			asprintf( &fullname,"idPR%i.dat#type=kch",prototype_id );
+		} else {
+			prototype_id = strtoul( argv[ j ]+ 4,NULL,0 );
+			asprintf( &fullname,"%s#type=kch",argv[ j ] );
+		}
+		
+		QsDb db = qs_db_new( fullname,QS_DB_READ );
+
+		free( fullname );
+
+		if( db ) {
+			QsDbCursor cur = qs_db_cursor_new( db );
+
+			struct QsDbEntry* row;
+			while( ( row = qs_db_cursor_next( cur ) ) ) {
+				if( memcmp( row->key,"generated",row->keylen )&& memcmp( row->key,"setup",row->keylen ) ) {
+					char* integral_str;
+					size_t integral_str_len = asprintf( &integral_str,"PR%u",prototype_id );
+					integral_str = realloc( integral_str,integral_str_len + 1 + row->keylen );
+					memcpy( integral_str + integral_str_len + 1,row->key,row->keylen );
+					integral_str_len += 1 + row->keylen;
+					QsIntegral integral = qs_integral_new_from_binary( integral_str,integral_str_len );
+					free( integral_str );
+
+					unsigned order = *( (int*)( row->val +( row->vallen - sizeof (int) ) ) );
+
+					establish_order( order,integral );
+
+					qs_integral_destroy( integral );
+				}
+
+				qs_db_entry_destroy( row );
+			}
+
+			qs_db_cursor_destroy( cur );
+			qs_db_destroy( db );
+		} else {
+			fprintf( stderr,"Error: Could not load database\n" );
+			exit( EXIT_FAILURE );
+		}
+	}
 
 	if( width==0 )
 		width = pivot_map.n_columns/resolution;
@@ -320,9 +286,31 @@ int main( const int argc,char* const argv[ ] ) {
 	masters = malloc( 0 );
 
 	printf( "Stage II:  Collecting data in range [%i,%i]x[%i,%i] of %i components...\n",base_row,base_row + height*resolution,base_col,base_col + width*resolution,pivot_map.n_columns );
-	loop_all_dbs( argc,argv,true,fill_data,6 );
-	
-	
+
+	GThreadPool* pool = g_thread_pool_new( (GFunc)fill_data,NULL,6,TRUE,NULL );
+	QsIntegralMgr m = qs_integral_mgr_new_with_size( "idPR",".dat#type=kch","PR",".dat#type=kch",0 );
+
+	for( j = 0; j<pivot_map.n_columns; j++ ) {
+		const unsigned row = j;
+		const unsigned end_row = base_row + resolution*height;
+
+		if( row>=base_row && row<end_row ) {
+			QsIntegral row_target = pivot_map.columns[ j ].integral;
+			struct QsMetadata meta;
+
+			QsExpression e = qs_integral_mgr_load_raw( m,row_target,&meta );
+
+			struct RowTask* t = malloc( sizeof (struct RowTask) );
+			t->expression = e;
+			t->row = row;
+
+			g_thread_pool_push( pool,t,NULL );
+		}
+	}
+
+	qs_integral_mgr_destroy( m );
+	g_thread_pool_free( pool,FALSE,TRUE );
+
 	/* Image format
 	 *
 	 *             width+2 width+4
@@ -344,8 +332,6 @@ int main( const int argc,char* const argv[ ] ) {
 	 * image with = 1+width+1+1+1+n_masters+1 = width+n_masters+5
 	 * image height = 1+height+1 = height+2
 	 */
-	
-	//*
 	
 	printf( "Stage III: Rendering with %i masters to file...\n",master_map.n_columns );
 	unsigned img_width = width+n_masters+5;
@@ -379,7 +365,7 @@ int main( const int argc,char* const argv[ ] ) {
 			if( n_empty==total )
 				green_blue_mass = red_mass = 1;
 			else {
-				green_blue_mass = ( 0.4*sqrt( n_empty ) )/( 1.0*resolution );
+				green_blue_mass = MAX( 0,( 1.0f*n_empty/total )- DRAW_TRESHOLD )*( DRAW_MAX/( 1.0f - DRAW_TRESHOLD ) );
 				if( current.n_missing==0 )
 					red_mass = green_blue_mass;
 				else
@@ -397,13 +383,14 @@ int main( const int argc,char* const argv[ ] ) {
 		unsigned ssrow;
 		for( ssrow = 0; ssrow<height; ssrow++ ) {
 			struct MasterSector current = masters[ sscolumn ][ ssrow ];
+			unsigned n_empty = total - current.n_coefficients;
 
 			double mass;
 
 			if( current.n_coefficients==0 )
 				mass = 1;
 			else
-				mass = 0.5-0.5*current.n_coefficients/total;
+				mass = MAX( 0,( 1.0f*n_empty/total )- DRAW_TRESHOLD )*( DRAW_MAX/( 1.0f - DRAW_TRESHOLD ) );
 
 			cairo_set_source_rgb( cr,mass,mass,mass );
 			cairo_rectangle( cr,4+width+sscolumn,1+ssrow,1,1 );
@@ -417,7 +404,6 @@ int main( const int argc,char* const argv[ ] ) {
 	cairo_destroy( cr );
 	cairo_surface_destroy( cs );
 
-	//*/
 	int k;
 	for( k = 0; k<n_masters; k++ )
 		free( masters[ k ] );
