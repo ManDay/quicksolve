@@ -26,8 +26,8 @@
  * or which are masters.
  */
 
-#define DRAW_TRESHOLD 0.6f
-#define DRAW_MAX 0.8f
+#define DRAW_TRESHOLD 0.85f
+#define DRAW_MAX 0.9f
 
 const char const usage[ ]= "The Source is the doc.";
 

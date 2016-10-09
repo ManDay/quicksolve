@@ -883,7 +883,8 @@ static void* worker( void* udata ) {
 			unsigned n_independent = atomic_load_explicit( &status.n_independent,memory_order_relaxed );
 			size_t memusage = atomic_load_explicit( &status.memusage,memory_order_relaxed );
 			unsigned queue_size = atomic_load_explicit( &status.queue_size,memory_order_relaxed );
-			printf( "Numeric evaluations: %i\nSymbolic evaluations: %i\nSymbolic tree depth: %i\nSymbolic parallelism: %i\nSymbolic memory usage: %zu\nCached QsTerminals: %i\n",num_eval,sym_eval,n_terminals,n_independent,memusage,queue_size );
+			// Numeric evaluations,Symbolic evaluations,Symbolic tree depth,Symbolic parallelism,Symbolic memory usage,Cached QsTerminals
+			printf( "%i,%i,%i,%i,%zu,%i\n",num_eval,sym_eval,n_terminals,n_independent,memusage,queue_size );
 
 			pthread_spin_unlock( &status.lock );
 #endif
