@@ -1,0 +1,64 @@
+#!/bin/bash
+
+# Usage: $0
+
+### BEGIN CONFIGURATION SECTION ###
+
+# Lockfile
+lockfile="/tmp/lockfile"
+
+# File with list of used hosts, one host per instance. Each line of the
+# form:
+#
+# <NO> <HOST>
+#
+# <NO> being an integer used for sorting with "sort", i.e. 1 is highest
+# priority, <HOST> being the name of the host.
+hostfile="/tmp/hostlist"
+
+# User name for SSH connection
+user="sodhi"
+
+### END CONFIGURATION SECTION ###
+
+# Hostname of localhost to prevent local ssh connections
+localhost="$(hostname)"
+
+# File containing the entry extracted from the hostfile
+target_host_file="$(mktemp)"
+
+(
+	flock 3
+
+	tmp_hostfile=$(mktemp)
+	sort -n "$hostfile" >"$tmp_hostfile"
+	head -n 1 "$tmp_hostfile" >"$target_host_file"
+	tail -n +2 "$tmp_hostfile" >"$hostfile"
+
+	rm "$tmp_hostfile"
+) 3>"$lockfile"
+
+target_host="$(cat "$target_host_file" | egrep -o '[[:space:]]*[^[:space:]]*$' | grep -o '[[:alnum:]]*')"
+
+# Fail if there is no host available
+if [[ "$target_host" == "" ]]
+then
+	exit 1
+fi
+
+if [[ "$target_host" == "$localhost" || "$target_host" == "localhost" ]]
+then
+	fermat
+else
+	ssh "${user}@$target_host" "nice +15 fermat"
+fi
+
+(
+	flock 3
+
+	cat "$target_host_file" >>"$hostfile"
+) 3>"$lockfile"
+
+rm "${target_host_file}"
+
+exit 0

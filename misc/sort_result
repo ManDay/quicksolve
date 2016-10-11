@@ -1,0 +1,55 @@
+#!/bin/bash
+
+target="$1"
+
+if (( $# < 1 )) || ! [[ -f "$1" ]]
+then
+	echo "Usage: $0 <Infile>"
+	echo "Brings results of Quicksolve and IdSolver into ordered form for comparison"
+	exit 1
+fi
+
+tempdir="$(mktemp -d)"
+
+gawk -f <(cat <<-ENDPROGRAM
+
+BEGIN {
+	RS = "fill PR"
+	FS = "="
+	tempdir = "$tempdir"
+}
+
+{
+	integral[1] = 0
+	found = split( \$1,integral,/\\(|,|\\)/ )
+
+	if( found>1 ) {
+		prototype = integral[ 1 ]
+		delete integral[ 1 ]
+		delete integral[ found ]
+
+		filename = "PR" prototype
+
+		for( power in integral ) {
+			filename = filename "_" integral[ power ]
+		}
+
+		print "Extracting " filename >/dev/stderr
+
+		filepath = tempdir "/" filename
+		print \$2 >filepath
+	}
+}
+
+ENDPROGRAM
+) -- "$target"
+
+for file in "$tempdir/"*
+do
+	integral="$(basename "$file")"
+	echo "Sorting $integral" >&2
+	echo "$integral:"
+	grep -R "PR" "$file" | sort -u
+done
+
+rm -Rf "$tempdir"

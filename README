@@ -1,0 +1,154 @@
+QUICKSOLVE USER MANUAL
+
+Contents
+--------
+
+I   How to configure and compile
+II  Quicksolve
+III Quickcheck
+IV  SSRenderer
+V   distributed_fermat
+VI  sort_result
+
+
+I   How to configure and compile
+--------------------------------
+
+Prerequisites
+
+*  CMake >3.3
+*  CCMake (recommended)
+*  Kyotocabinet >1.2.76 (for everything but AEF test)
+*  C11 capable compiler
+*  asprintf capable C standard library (see below)
+*  GTK2, Cairo (for SSRenderer)
+*  JEMalloc (optional)
+
+To compile Quicksolve and associate binaries, extract the source into a directory, say '~/qs'. Install the prerequisites. Create a new directory for building, say '~/build'. Change the working directory to '~/build' and run CMake, pointing to the source directory like so:
+
+cmake ~/qs
+
+Configure CMake using the graphical CCMake user interface or the cmake commandline. The following non-standard options are available:
+
+*  KYOTO_INCLUDE_DIR
+	 Points to the directory in which the Kyotocabinet header files can be found
+*  KYOTO_LIB
+	 Points to the Kyotocabinet library file
+*  QS_BUILD_QUICKCHECK
+	 Whether to build 'quickcheck'
+*  QS_BUILD_QUICKSOLVE
+	 Whether to build 'quicksolve'
+*  QS_BUILD_SSRENDERER
+	 Whether to build 'ssrenderer'
+*  QS_BUILD_TESTS
+	 Whether to build 'tests/aef'
+*  QS_DEBUG_EVAL
+	 If ON, will log all data send to and received from FERMAT into log files
+*  QS_DEBUG_EVALFILE
+	 If QS_DEBUG_EVAL is ON, the name of the file, suffixed by the PID of the fermat process will be used to log the data
+*  QS_DEBUG_LEVEL
+	 Debug verbosity of programs
+*  QS_FERMAT_BINARY
+	 Name of the binary to run for sybolic evaluations
+*  QS_FERMAT_BINARY_NUMERIC
+	 Name of the binary to run for numeric evaluations
+*  QS_INTEGRAL_POWERTYPE
+	 C datatype corresponding to the "power" of a "prototype" as it is used in the databases
+*  QS_JEMALLOC
+	 Whether to use the JEMalloc memory allocator
+*  QS_STATUS
+	 If set to ON, Quicksolve will print a CSV status after each evaluation
+
+When configuration is done, run "make" to create all selected binaries. If your standard compiler is not C11 capable, configure a C11 capable compiler in the "Advanced" CMake option CMAKE_C_COMPILER.
+
+II  Quicksolve
+--------------
+
+Quicksolve assumes identity databases in Kyotocabinet hashtable format named
+
+idPR<Number>.dat
+
+in the current working directory, where <Number> indicates the number of the associated prototype. Quicksolve optionally accepts (partial) solution databases named
+
+PR<Number>.dat
+
+in the current directory. If the latter do not exist, they will be created during the solution. When Quicksolve is run, it expects to be given integrals on standard input. If -q is given, it will print the names of integrals when the numeric run has solved them. If -q is not given, it will solve each integral fully symbolically before moving on to the next. In normal operation, -q is expected to be present.
+
+Further, the following options are accepted:
+
+-p  Number of threads to spawn for symbolic evaluation
+-n  Number of threads to spawn for numeric evaluation
+-k  Number of evaluations before the symbolic evaluator is restarted
+-a  Assumed number of integrals in the system for better preallocation of required mapping
+-m  Memory limit for symbolic coefficients. If that given memory is exhausted, coefficients will be stored back to the database indicated by the -b switch
+-b  Backing database concerning the -m switch
+-t  Maximum number of unevaluated symbolic coefficients. If that given number is exhausted, the numeric run will wait until sufficiently many symbolic evaluations have completed.
+
+Further, every symbol occuring in the databases must be registered with positional arguments as either
+
+<Symbol>=<Value> or <Symbol>:<Value>
+
+The first form will provide a full symbolic solution. The second form will substitute the symbol for the given value even in the symbolic solution.
+
+Example invocation of Quicksolve in the BASH shell on 6 cores with 8 gigabytes:
+
+quicksolve -q -eo -n2 -p5 -k4 -m 10000000 -t 100000 epsilon=1/11 x=1/17 < integral_list
+
+III Quickcheck
+--------------
+
+Quickcheck can be ran on arbitrary solution databases. It passes the found coefficients through FERMAT in order to establish that the coefficients are syntactically valid. It accepts the following options:
+
+-p  Number of threads to spawn for validation
+-s <Name>=<Value> Name-Value-pairs for symbolcs (those which are passed as positional arguments to Quicksolve)
+
+Failure to validate the databases will be indicated on the commandline. If no failure is indicated, it can be assumed that the validation passed. If failure is indicated, further hints as to what caused the failure can be obtained by activating QS_DEBUG_EVAL and inspecting the generated logfiles.
+
+Example invocation in BASH:
+
+quickcheck -p 6 -s ep=1/17 -s x=1/11 PR*.dat
+
+IV  SSRenderer
+--------------
+
+SSRenderer (Subsampling Renderer) generates a PNG file of the matrix or a subsection thereof, associated with the system in the current state of the system. It accepts the following options
+
+-c  Column number where the rendered subsection starts
+-r  Row number where the rendered subsection starts
+-h  Height of the picture in pixels
+-w  Width of the picture in pixels
+-s  Number of columns/rows per pixel, i.e. resolution
+
+Further, it expects identity databases from which to obtain the matrix as positional arguments. Solution databases named PR<Number>.dat, if present in the current working directory, are automatically taken into account.
+
+Example invocation in BASH:
+
+ssrenderer -c 100 -r 20000 -w 512 -h 512 -s 46 idPR*.dat
+
+V   distributed_fermat
+----------------------
+
+A BASH wrapper to the FERMAT binary ((C) 2016 Kirchner, Sodhi) (or any other evaluator, if modified accordingly) which will outsource evaluations to a set of remote hosts. The list is expected in a file and have the exemplary form
+
+1 localhost
+1 localhost
+1 hostA
+2 hostB
+2 hostB
+3 hostB
+3 hostC
+4 hostC
+...
+
+where the number indicates the priority with which the host should be used for evaluation (1 being highest priority). The location of this file, the location of an associated lockfile used for governing concurrent access, and the name of the user to use for connecting with SSH are all configured in the source code of distributed_fermat.
+
+The list must contain at least as many hosts as associated symbolic or numeric threads are started by Quicksolve. The wrapper will then transparently behave just like the ordinary binary.
+
+VI  sort_result
+---------------
+
+Auxilliary script for sorting the output of Quicksolve (without the -q option) and IdSolver so as to compare the two. Takes as an argument the file with the results and prints the sorted representation to standard output.
+
+Example invocation:
+
+sort_result result.txt
